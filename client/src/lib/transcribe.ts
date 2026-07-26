@@ -2,7 +2,8 @@ import api from './api';
 import { fixArabicSpeechTranscript, isValidArabicSessionTranscript, shouldForceArabicTranscription } from './arabicSttFix';
 import { withTimeout } from './withTimeout';
 
-const TRANSCRIBE_TIMEOUT_MS = 25000;
+/** Must stay above axios timeout for the same request. */
+export const TRANSCRIBE_TIMEOUT_MS = 45_000;
 
 function resolveRequestLanguage(language: string, sessionLang: string): string {
   if (shouldForceArabicTranscription(sessionLang)) return 'ar-EG';
@@ -15,12 +16,16 @@ export async function transcribeAudioBlob(blob: Blob, language: string, sessionL
   const expectArabic = shouldForceArabicTranscription(sessionLang);
   const audioBase64 = await blobToBase64(blob);
   const res = await withTimeout(
-    api.post<{ text: string }>('/transcribe', {
-      audioBase64,
-      mimeType: blob.type || 'audio/webm',
-      language: resolveRequestLanguage(language, sessionLang),
-      forceArabic: expectArabic,
-    }),
+    api.post<{ text: string }>(
+      '/transcribe',
+      {
+        audioBase64,
+        mimeType: blob.type || 'audio/webm',
+        language: resolveRequestLanguage(language, sessionLang),
+        forceArabic: expectArabic,
+      },
+      { timeout: TRANSCRIBE_TIMEOUT_MS },
+    ),
     TRANSCRIBE_TIMEOUT_MS,
     'transcription-timeout',
   );

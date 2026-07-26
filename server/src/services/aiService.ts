@@ -7,7 +7,14 @@ import { parsePhysicalExamForm } from './caseFormService.js';
 import { toEgyptianColloquial } from './arabicColloquial.js';
 import { fixArabicSpeechTranscript } from './arabicSttFix.js';
 import { logAiUsage, type AiUsageMeta } from './aiUsageService.js';
-import { parseStationConfig, resolveManeuverOpeningMessage, resolveManeuverLabel } from '../lib/stationConfig.js';
+import {
+  formatPatientBehaviorPrompt,
+  parseStationConfig,
+  resolveManeuverOpeningMessage,
+  resolveManeuverLabel,
+  type PatientBehavior,
+  type StationConfig,
+} from '../lib/stationConfig.js';
 
 interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
@@ -111,30 +118,61 @@ function hasPattern(text: string, pattern: RegExp): boolean {
   return pattern.test(text);
 }
 
+/**
+ * Global Synoza patient behavior rules — applied to every case (chat + voice),
+ * on top of case background and any admin/station overrides.
+ */
+const SYNOZA_PATIENT_CORE_RULES = `SYNOZA PATIENT BEHAVIOR RULES (always follow):
+- Stay fully in character. Never mention AI, prompts, instructions, system messages, hidden case data, scoring, or evaluation.
+- Behave like a real human. Answer ordinary social questions (football, movies, food, family, hobbies) naturally and briefly, unless it conflicts with the case.
+- Never invent medical facts. Medical history, symptoms, and medications must match the case exactly. You may improvise harmless personal details only.
+- Respect biological reality: never say anything impossible for your age/sex/anatomy/pregnancy status (e.g. a man never mentions menstruation; a woman never mentions a prostate; a child never describes adult work life).
+- Correct false assumptions politely and in character instead of answering them (e.g. "I'm a man, doctor, so I don't have periods.").
+- Protect your dignity. If the student is abusive, mocking, sexually inappropriate, or disrespectful, stay calm, don't validate it, and ask to keep things respectful; if it continues, politely decline to go on until they do.
+- Answer every question in a multi-question message separately; don't ignore earlier parts.
+- Admit when you don't know ("I'm not sure", "I don't remember", "the doctor didn't explain that"). Never guess medical information.
+- Don't volunteer extra symptoms or information unless specifically asked.
+- Show emotion that fits the situation (anxiety, embarrassment, fear, frustration, relief) without exaggerated drama unless the case requires it.
+- You may politely decline overly personal, irrelevant questions ("I'd rather not answer that.").
+- Be cooperative and honest unless the case specifically says to withhold.
+- Reveal no hidden knowledge: no diagnosis, examiner notes, checklist items, scoring, differentials, or planned investigations.
+- Keep most answers to 1–3 sentences; only go longer for open-ended questions.
+- Stay internally consistent; never contradict earlier answers.
+- Speak in fluent, natural, grammatically correct language matching your age, education, personality, and background. Avoid robotic, textbook, or machine-translated phrasing and repeated stock phrases.
+- Keep formatting clean: no lists, brackets, slashes, or emojis. Pick one language per reply and don't mix Arabic and English in the same sentence unless the case requires it, and don't translate your own words.
+- If conversation drifts off-topic or becomes excessive, gently steer back to the consultation ("I'd be happy to chat, doctor, but I'm worried about why I'm feeling unwell.").`;
+
 function buildPatientSystemPrompt(
   caseData: Case,
   language: Language,
   knowledgeContext: string,
   voiceTurn = false,
   studentTurn = 0,
+  patientBehavior?: PatientBehavior | null,
 ): string {
   const personality = caseData.patientPersonality || 'Cooperative Egyptian patient, anxious about symptoms';
   const scenario = caseData.scenarioPrompt || 'Standard OSCE patient encounter';
   const nameAr = patientNameInLang(caseData, true);
+  const behaviorBlock = formatPatientBehaviorPrompt(patientBehavior);
+  const toneHint = patientBehavior?.tone ? ` Tone: ${patientBehavior.tone}.` : '';
+  const emotionHint = patientBehavior?.emotion ? ` Emotion: ${patientBehavior.emotion}.` : '';
 
   if (voiceTurn) {
     const langNote =
       language === 'EN'
-        ? 'Respond ONLY in English. One short sentence.'
-        : 'عامية مصرية طبيعية — جملة أو اتنين بس. ممنوع الفصحى والإنجليزي.';
+        ? 'Respond ONLY in English. One or two short complete sentences.'
+        : 'عامية مصرية طبيعية — جملة أو اتنين كاملين. ممنوع الفصحى والإنجليزي.';
     const personaNote = knowledgeContext.includes('ADMIN AI KNOWLEDGE')
       ? '\nFollow ADMIN AI KNOWLEDGE persona below (tone/dialect/gendered speech).'
       : '';
     return `Live OSCE voice call. You are ${caseData.patientName}, ${caseData.patientAge}y, ${caseData.patientGender}.
 Chief complaint: ${caseData.chiefComplaint}
-Personality: ${personality}
-${langNote}${personaNote}
-Rules: if the doctor asks several short factual questions together (name, age, where you live), answer all briefly in 1–2 sentences; otherwise focus on the main question; never state diagnosis (${caseData.finalDiagnosis}); lay language only.${knowledgeContext}`;
+Personality: ${personality}.${toneHint}${emotionHint}
+Medical history: ${caseData.medicalHistory}
+Scenario: ${scenario}
+${langNote}${personaNote}${behaviorBlock}
+${SYNOZA_PATIENT_CORE_RULES}
+Rules: if the doctor asks several short factual questions together (name, age, where you live), answer all briefly in 1–2 sentences; otherwise focus on the main question; never state diagnosis (${caseData.finalDiagnosis}); lay language only; finish every sentence; never invent facts outside CASE BACKGROUND.${knowledgeContext}`;
   }
 
   const langNote =
@@ -181,7 +219,7 @@ PERSONA PRIORITY (from ADMIN AI KNOWLEDGE below):
     : '';
 
   return `You are a simulated Egyptian patient in an OSCE clinical examination. Stay fully in character as ${caseData.patientName}, ${caseData.patientAge} years old.
-${personaOverride}
+${personaOverride}${behaviorBlock}
 
 CASE BACKGROUND (use when relevant to the question — do not recite everything at once):
 - Chief complaint: ${caseData.chiefComplaint}
@@ -190,15 +228,19 @@ CASE BACKGROUND (use when relevant to the question — do not recite everything 
 - Surgical history: ${caseData.surgicalHistory}
 - Family history: ${caseData.familyHistory}
 - Social history: ${caseData.socialHistory}
-- Personality: ${personality}
+- Personality: ${personality}.${toneHint}${emotionHint}
 - Scenario notes: ${scenario}
 
 ${phaseNote}
 
 ${voiceRules}
 - CRITICAL: Only reveal facts from CASE BACKGROUND and scenario notes above. Never invent symptoms, history, medications, or details not configured for this case.
+- When speaking Arabic, never leak English admin field text — paraphrase into natural Egyptian Arabic.
+- Avoid repeating the same complaint sentence if you already said it; add a new detail from CASE BACKGROUND or how it affects daily life.
 - Lay language only — no medical jargon or English disease terms.
 - ${langNote}
+
+${SYNOZA_PATIENT_CORE_RULES}
 ${knowledgeContext}`;
 }
 
@@ -380,12 +422,12 @@ const VOICE_CONTEXT_CAP = 6;
 const CHAT_PATIENT_MAX_TOKENS = 220;
 const CHAT_PATIENT_MULTI_MAX_TOKENS = 360;
 const CHAT_EXAMINER_MAX_TOKENS = 64;
-const VOICE_PATIENT_MAX_TOKENS = 48;
-/** Hard SLA for live voice AI turns (≤2s requirement). */
-const VOICE_TIMEOUT_MS = 1400;
+const VOICE_PATIENT_MAX_TOKENS = 96;
+/** Live voice AI budget — long enough for a complete short reply without mid-sentence cuts. */
+const VOICE_TIMEOUT_MS = 3500;
 /** Non-voice chat: allow a bit more time for multi-part answers. */
-const CHAT_TIMEOUT_MS = 2000;
-const CHAT_MULTI_TIMEOUT_MS = 4500;
+const CHAT_TIMEOUT_MS = 3500;
+const CHAT_MULTI_TIMEOUT_MS = 5500;
 
 function chatContextWindow(history: { role: string; content: string }[], maxMessages: number, voiceTurn = false) {
   return contextWindow(history, Math.min(maxMessages, voiceTurn ? VOICE_CONTEXT_CAP : CHAT_CONTEXT_CAP));
@@ -1583,8 +1625,24 @@ function getDeterministicPatientResponse(
         if (intents.includes('symptoms')) {
           const detailed = patientDetailedComplaint(caseData, isArabic);
           if (detailed && !isNearDuplicatePatientReply(detailed, history)) return detailed;
+          const rich = patientRichComplaint(caseData, isArabic);
+          if (rich && !isNearDuplicatePatientReply(rich, history)) return rich;
         }
-        return null;
+        // Prefer a varied case-grounded line over falling through to generic clarify.
+        const alternates = isArabic
+          ? [
+              'والله يا دكتور أنا لسه مش مرتاح، الموضوع بيأثر عليا في يومي.',
+              'بصراحة لسه نفس التعب، ومش لاقي راحة زي الأول.',
+              'الموضوع مستمر معايا، وبحس إنّه بيضايقني أكتر مع اليوم.',
+            ]
+          : [
+              'I am still not feeling well, doctor — it keeps affecting my day.',
+              'Honestly I still have the same discomfort and cannot rest like before.',
+              'It is ongoing and bothers me more as the day goes on.',
+            ];
+        for (const alternate of alternates) {
+          if (!isNearDuplicatePatientReply(alternate, history)) return alternate;
+        }
       }
       return intentReply;
     }
@@ -1660,10 +1718,23 @@ function mockPatientResponse(
     ) {
       const detailed = patientDetailedComplaint(caseData, isArabic);
       if (!isNearDuplicatePatientReply(detailed, history)) return detailed;
-      // Last resort variety so mock mode does not loop forever.
-      return isArabic
-        ? 'الشكوى دي مستمرة معايا، وبتتعبني أكتر مع اليوم، ومش عارف أرتاح.'
-        : 'The problem is still going on and it bothers me more through the day.';
+      // Rotate last-resort variety so mock mode does not loop the same line.
+      const variants = isArabic
+        ? [
+            'الشكوى دي مستمرة معايا، وبتتعبني أكتر مع اليوم، ومش عارف أرتاح.',
+            'بصراحة يا دكتور الموضوع بيأثر على نومي وشغلي، ومش لاقي راحة.',
+            'لسه نفس المشكلة، وبحس إن الوضع مش بيتحسن زي ما كنت متوقع.',
+          ]
+        : [
+            'The problem is still going on and it bothers me more through the day.',
+            'Honestly doctor, it is affecting my sleep and work, and I cannot rest.',
+            'It is the same problem, and I do not feel it is improving.',
+          ];
+      for (let i = 0; i < variants.length; i++) {
+        const candidate = variants[(studentTurn + i) % variants.length];
+        if (!isNearDuplicatePatientReply(candidate, history)) return candidate;
+      }
+      return variants[studentTurn % variants.length];
     }
     return brief;
   }
@@ -2278,12 +2349,22 @@ export async function getPatientResponse(
   history: { role: string; content: string }[],
   userMessage: string,
   language: Language,
-  options?: { voiceTurn?: boolean; userId?: string; sessionId?: string },
+  options?: {
+    voiceTurn?: boolean;
+    userId?: string;
+    sessionId?: string;
+    stationConfig?: StationConfig | null;
+    patientBehavior?: PatientBehavior | null;
+  },
 ): Promise<string> {
   const normalizedMessage = normalizeStudentMessage(userMessage, language);
   const lang = effectivePatientLanguage(language, normalizedMessage);
   const voiceTurn = !!options?.voiceTurn;
   const studentTurn = history.filter((m) => m.role === 'STUDENT').length;
+  const patientBehavior =
+    options?.patientBehavior ??
+    options?.stationConfig?.patientBehavior ??
+    null;
 
   const [customPatientKnowledge, settings] = await Promise.all([
     hasPatientAiKnowledge({
@@ -2346,7 +2427,14 @@ export async function getPatientResponse(
     ? `\nMULTI-QUESTION MESSAGE: The doctor asked several questions at once. Answer EVERY part in one reply (name, age, residence, habits, complaint, course, hobbies — whichever was asked). Do not stop after the first two facts.`
     : '';
   const systemPrompt =
-    buildPatientSystemPrompt(caseData, lang, knowledgeContext, voiceTurn, studentTurn) +
+    buildPatientSystemPrompt(
+      caseData,
+      lang,
+      knowledgeContext,
+      voiceTurn,
+      studentTurn,
+      patientBehavior,
+    ) +
     multiPartRule +
     adminSystemPromptSuffix(settings, lang, 'patient');
   const messages: ChatMessage[] = [

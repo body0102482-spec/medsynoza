@@ -33,10 +33,28 @@ router.post('/', async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Transcription failed';
     if (message === 'recording-too-short') {
-      return res.status(400).json({ error: 'Recording too short' });
+      return res.status(400).json({
+        error: 'Recording too short or quiet',
+        code: 'recording-too-short',
+      });
     }
     if (message === 'transcription-unavailable') {
-      return res.status(503).json({ error: 'Speech transcription is not configured on the server' });
+      return res.status(503).json({
+        error: 'Speech transcription is not configured on the server',
+        code: 'transcription-unavailable',
+      });
+    }
+    if (message === 'transcription-auth-failed') {
+      return res.status(503).json({
+        error: 'The OpenAI API key is missing or invalid',
+        code: 'transcription-auth-failed',
+      });
+    }
+    if (message === 'transcription-quota-exceeded') {
+      return res.status(503).json({
+        error: 'The OpenAI transcription quota is unavailable',
+        code: 'transcription-quota-exceeded',
+      });
     }
     if (message === 'transcription-not-arabic') {
       return res.status(422).json({ error: 'Could not recognize Arabic speech — try again clearly' });

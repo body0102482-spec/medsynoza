@@ -5,6 +5,16 @@ export const MAIN_STAGES = ['history', 'examination', 'investigations', 'diagnos
 export type MainStageId = (typeof MAIN_STAGES)[number];
 export type SimulationStageId = MainStageId | 'feedback';
 
+export type PatientPreferredLanguage = 'AUTO' | 'AR' | 'EN';
+
+export interface PatientBehavior {
+  instructions: string;
+  tone: string;
+  emotion: string;
+  preferredLanguage: PatientPreferredLanguage;
+  constraints: string;
+}
+
 export interface StationConfig {
   enabledManeuvers: ManeuverId[];
   enableHistoryExaminer: boolean;
@@ -12,9 +22,20 @@ export interface StationConfig {
   stageOrder: MainStageId[];
   maneuverOpeningMessages: Partial<Record<ManeuverId, string>>;
   maneuverLabels: Partial<Record<ManeuverId, { en: string; ar: string }>>;
+  patientBehavior: PatientBehavior;
 }
 
-export type PartialStationConfig = Partial<StationConfig>;
+export type PartialStationConfig = Partial<Omit<StationConfig, 'patientBehavior'>> & {
+  patientBehavior?: Partial<PatientBehavior>;
+};
+
+export const DEFAULT_PATIENT_BEHAVIOR: PatientBehavior = {
+  instructions: '',
+  tone: '',
+  emotion: '',
+  preferredLanguage: 'AUTO',
+  constraints: '',
+};
 
 export const DEFAULT_MANEUVER_OPENING_TEMPLATE =
   'I am evaluating your clinical {{maneuver}}. Take a close look at the clinical presentation and images provided. Describe your findings systematically and explain what you would look for during {{maneuver}}, including any scars, deformities, or visible abnormalities.';
@@ -33,6 +54,7 @@ export const DEFAULT_STATION_CONFIG: StationConfig = {
   stageOrder: [...MAIN_STAGES],
   maneuverOpeningMessages: {},
   maneuverLabels: {},
+  patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
 };
 
 function parseManeuverOpeningMessages(raw: unknown): Partial<Record<ManeuverId, string>> {
@@ -58,6 +80,68 @@ function parseManeuverLabels(raw: unknown): Partial<Record<ManeuverId, { en: str
     if (en || ar) result[maneuver] = { en: en || MANEUVER_LABELS[maneuver].en, ar: ar || MANEUVER_LABELS[maneuver].ar };
   }
   return result;
+}
+
+function isPreferredLanguage(value: unknown): value is PatientPreferredLanguage {
+  return value === 'AUTO' || value === 'AR' || value === 'EN';
+}
+
+export function parsePatientBehavior(raw: unknown): PatientBehavior {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...DEFAULT_PATIENT_BEHAVIOR };
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    instructions: typeof obj.instructions === 'string' ? obj.instructions.trim() : '',
+    tone: typeof obj.tone === 'string' ? obj.tone.trim() : '',
+    emotion: typeof obj.emotion === 'string' ? obj.emotion.trim() : '',
+    preferredLanguage: isPreferredLanguage(obj.preferredLanguage)
+      ? obj.preferredLanguage
+      : 'AUTO',
+    constraints: typeof obj.constraints === 'string' ? obj.constraints.trim() : '',
+  };
+}
+
+export function mergePatientBehavior(
+  base: PatientBehavior,
+  override?: Partial<PatientBehavior> | null,
+): PatientBehavior {
+  if (!override) return { ...base };
+  return {
+    instructions:
+      override.instructions !== undefined ? String(override.instructions).trim() : base.instructions,
+    tone: override.tone !== undefined ? String(override.tone).trim() : base.tone,
+    emotion: override.emotion !== undefined ? String(override.emotion).trim() : base.emotion,
+    preferredLanguage: isPreferredLanguage(override.preferredLanguage)
+      ? override.preferredLanguage
+      : base.preferredLanguage,
+    constraints:
+      override.constraints !== undefined ? String(override.constraints).trim() : base.constraints,
+  };
+}
+
+export function formatPatientBehaviorPrompt(behavior: PatientBehavior | null | undefined): string {
+  if (!behavior) return '';
+  const lines: string[] = [];
+  if (behavior.tone) lines.push(`- Tone: ${behavior.tone}`);
+  if (behavior.emotion) lines.push(`- Emotion: ${behavior.emotion}`);
+  if (behavior.preferredLanguage && behavior.preferredLanguage !== 'AUTO') {
+    lines.push(`- Preferred language: ${behavior.preferredLanguage}`);
+  }
+  if (behavior.instructions) lines.push(`- Custom instructions:\n${behavior.instructions}`);
+  if (behavior.constraints) lines.push(`- Hard constraints (must follow):\n${behavior.constraints}`);
+  if (!lines.length) return '';
+  return `\nSTATION PATIENT BEHAVIOR (admin overrides — follow these):\n${lines.join('\n')}\n`;
+}
+
+function patientBehaviorHasContent(behavior: PatientBehavior): boolean {
+  return !!(
+    behavior.instructions ||
+    behavior.tone ||
+    behavior.emotion ||
+    behavior.constraints ||
+    (behavior.preferredLanguage && behavior.preferredLanguage !== 'AUTO')
+  );
 }
 
 function mergeManeuverOpeningMessages(
@@ -133,6 +217,7 @@ export function parseStationConfig(raw: string | null | undefined): StationConfi
       ...DEFAULT_STATION_CONFIG,
       enabledManeuvers: [...ALL_MANEUVERS],
       stageOrder: [...MAIN_STAGES],
+      patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
     };
   }
   try {
@@ -149,6 +234,7 @@ export function parseStationConfig(raw: string | null | undefined): StationConfi
       ),
       maneuverOpeningMessages: parseManeuverOpeningMessages(parsed.maneuverOpeningMessages),
       maneuverLabels: parseManeuverLabels(parsed.maneuverLabels),
+      patientBehavior: parsePatientBehavior(parsed.patientBehavior),
     };
   } catch {
     return {
@@ -157,6 +243,7 @@ export function parseStationConfig(raw: string | null | undefined): StationConfi
       stageOrder: [...MAIN_STAGES],
       maneuverOpeningMessages: {},
       maneuverLabels: {},
+      patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
     };
   }
 }
@@ -186,6 +273,28 @@ export function parsePartialStationConfig(raw: string | null | undefined): Parti
     if (Object.keys(labels).length) {
       result.maneuverLabels = labels;
     }
+    if (parsed.patientBehavior && typeof parsed.patientBehavior === 'object') {
+      const rawBehavior = parsed.patientBehavior as Record<string, unknown>;
+      const partial: Partial<PatientBehavior> = {};
+      if (typeof rawBehavior.instructions === 'string') {
+        partial.instructions = rawBehavior.instructions.trim();
+      }
+      if (typeof rawBehavior.tone === 'string') {
+        partial.tone = rawBehavior.tone.trim();
+      }
+      if (typeof rawBehavior.emotion === 'string') {
+        partial.emotion = rawBehavior.emotion.trim();
+      }
+      if (isPreferredLanguage(rawBehavior.preferredLanguage)) {
+        partial.preferredLanguage = rawBehavior.preferredLanguage;
+      }
+      if (typeof rawBehavior.constraints === 'string') {
+        partial.constraints = rawBehavior.constraints.trim();
+      }
+      if (Object.keys(partial).length) {
+        result.patientBehavior = partial;
+      }
+    }
     return result;
   } catch {
     return {};
@@ -203,6 +312,7 @@ export function mergeStationConfig(
       stageOrder: [...base.stageOrder],
       maneuverOpeningMessages: { ...base.maneuverOpeningMessages },
       maneuverLabels: { ...base.maneuverLabels },
+      patientBehavior: { ...base.patientBehavior },
     };
   }
   return {
@@ -219,6 +329,7 @@ export function mergeStationConfig(
       override.maneuverOpeningMessages,
     ),
     maneuverLabels: mergeManeuverLabels(base.maneuverLabels, override.maneuverLabels),
+    patientBehavior: mergePatientBehavior(base.patientBehavior, override.patientBehavior),
   };
 }
 
@@ -226,6 +337,7 @@ export function serializeStationConfig(config: StationConfig): string {
   const enabled = config.enabledManeuvers.filter(isManeuverId);
   const openingMessages = parseManeuverOpeningMessages(config.maneuverOpeningMessages);
   const labels = parseManeuverLabels(config.maneuverLabels);
+  const behavior = parsePatientBehavior(config.patientBehavior);
   return JSON.stringify({
     enabledManeuvers: enabled.length > 0 ? enabled : [...ALL_MANEUVERS],
     enableHistoryExaminer: config.enableHistoryExaminer !== false,
@@ -233,6 +345,7 @@ export function serializeStationConfig(config: StationConfig): string {
     stageOrder: normalizeStageOrder(config.stageOrder),
     ...(Object.keys(openingMessages).length ? { maneuverOpeningMessages: openingMessages } : {}),
     ...(Object.keys(labels).length ? { maneuverLabels: labels } : {}),
+    ...(patientBehaviorHasContent(behavior) ? { patientBehavior: behavior } : {}),
   });
 }
 
@@ -257,6 +370,20 @@ export function serializePartialStationConfig(config: PartialStationConfig): str
   const labels = parseManeuverLabels(config.maneuverLabels);
   if (Object.keys(labels).length) {
     payload.maneuverLabels = labels;
+  }
+  if (config.patientBehavior) {
+    const raw = config.patientBehavior;
+    const partial: Partial<PatientBehavior> = {};
+    if (typeof raw.instructions === 'string') partial.instructions = raw.instructions.trim();
+    if (typeof raw.tone === 'string') partial.tone = raw.tone.trim();
+    if (typeof raw.emotion === 'string') partial.emotion = raw.emotion.trim();
+    if (isPreferredLanguage(raw.preferredLanguage)) {
+      partial.preferredLanguage = raw.preferredLanguage;
+    }
+    if (typeof raw.constraints === 'string') partial.constraints = raw.constraints.trim();
+    if (Object.keys(partial).length) {
+      payload.patientBehavior = partial;
+    }
   }
   return JSON.stringify(payload);
 }

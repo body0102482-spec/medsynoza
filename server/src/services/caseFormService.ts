@@ -1,11 +1,12 @@
 import type { Case } from '@prisma/client';
 import {
+  DEFAULT_PATIENT_BEHAVIOR,
   DEFAULT_STATION_CONFIG,
   parseStationConfig,
   serializeStationConfig,
   type ManeuverId,
   type MainStageId,
-  type StationConfig,
+  type PatientBehavior,
 } from '../lib/stationConfig.js';
 
 export type { ManeuverId };
@@ -67,6 +68,7 @@ export interface StationConfigForm {
   stageOrder: MainStageId[];
   maneuverOpeningMessages: Partial<Record<ManeuverId, string>>;
   maneuverLabels: Partial<Record<ManeuverId, { en: string; ar: string }>>;
+  patientBehavior: PatientBehavior;
 }
 
 export interface CaseFormPayload {
@@ -301,6 +303,7 @@ export function parseStationConfigForm(raw: string | null | undefined): StationC
     stageOrder: [...parsed.stageOrder],
     maneuverOpeningMessages: { ...parsed.maneuverOpeningMessages },
     maneuverLabels: { ...parsed.maneuverLabels },
+    patientBehavior: { ...parsed.patientBehavior },
   };
 }
 
@@ -314,6 +317,7 @@ export function serializeStationConfigForm(config: StationConfigForm): string {
       : [...parseStationConfig(null).stageOrder],
     maneuverOpeningMessages: config.maneuverOpeningMessages ?? {},
     maneuverLabels: config.maneuverLabels ?? {},
+    patientBehavior: config.patientBehavior ?? { ...DEFAULT_PATIENT_BEHAVIOR },
   });
 }
 

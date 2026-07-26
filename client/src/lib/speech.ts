@@ -7,6 +7,8 @@ const EGYPTIAN_VOICE_HINT =
 const IS_MOBILE =
   typeof navigator !== 'undefined' && /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
 
+const SPEECH_TIMEOUT_MS = 25_000;
+
 let activeAudio: HTMLAudioElement | null = null;
 let activeObjectUrl: string | null = null;
 
@@ -58,7 +60,7 @@ async function speakViaServer(text: string, lang: string): Promise<void> {
   const res = await api.post<ArrayBuffer>(
     '/speech/speak',
     { text: text.trim(), lang: lang.startsWith('ar') ? 'ar-EG' : 'en-US' },
-    { responseType: 'arraybuffer' },
+    { responseType: 'arraybuffer', timeout: SPEECH_TIMEOUT_MS },
   );
 
   clearActiveAudio();
@@ -110,15 +112,32 @@ function speakViaBrowser(text: string, lang: string): Promise<void> {
   });
 }
 
-export function speakText(text: string, lang: string): Promise<void> {
+/**
+ * Speak the exact reply text. Prefer server TTS on mobile; fall back to browser.
+ * Resolves when playback finishes (or fails gracefully). Does not throw for soft failures.
+ */
+export async function speakText(
+  text: string,
+  lang: string,
+): Promise<{ ok: boolean; error?: string }> {
   const trimmed = text.trim();
-  if (!trimmed) return Promise.resolve();
+  if (!trimmed) return { ok: true };
 
-  if (IS_MOBILE) {
-    return speakViaServer(trimmed, lang).catch(() => speakViaBrowser(trimmed, lang));
+  try {
+    if (IS_MOBILE) {
+      try {
+        await speakViaServer(trimmed, lang);
+        return { ok: true };
+      } catch {
+        await speakViaBrowser(trimmed, lang);
+        return { ok: true };
+      }
+    }
+    await speakViaBrowser(trimmed, lang);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'tts-failed' };
   }
-
-  return speakViaBrowser(trimmed, lang);
 }
 
 export function playSpeechBase64(base64: string): Promise<void> {

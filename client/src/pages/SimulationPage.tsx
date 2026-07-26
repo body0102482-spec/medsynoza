@@ -30,6 +30,7 @@ import chestPercussionImg from "../assets/exam/chest-percussion.svg?url";
 import chestAuscultationImg from "../assets/exam/chest-auscultation.svg?url";
 // import { VoiceMicButton } from '../components/VoiceMicButton';
 import { SimulationChatInput } from '../components/SimulationChatInput';
+import { ChatScrollArea } from '../components/ChatScrollArea';
 import { LiveCallButton } from '../components/LiveCallButton';
 import { LiveCallMicStatus } from '../components/LiveCallMicStatus';
 import { SpeechLanguageToggle } from '../components/SpeechLanguageToggle';
@@ -402,6 +403,7 @@ export default function SimulationPage() {
   stopListeningRef.current = stopListening;
 
   const appendVoiceTurnMessages = useCallback((result: VoiceTurnResponse) => {
+    setMicError('');
     setSession((prev) => {
       if (!prev) return prev;
       const studentMsg: Message = {
@@ -419,12 +421,30 @@ export default function SimulationPage() {
     });
   }, []);
 
+  const handleLiveCallError = useCallback(
+    (code: string) => {
+      if (code === 'not-supported') setMicError(t('liveCallNotSupported'));
+      else if (code === 'not-allowed') setMicError(t('micPermissionDenied'));
+      else if (code === 'no-speech') setMicError('');
+      else if (code === 'network') setMicError(t('micNetworkError'));
+      else if (code === 'audio-capture') setMicError(t('micCaptureError'));
+      else if (code === 'start-failed') setMicError(t('micStartFailed'));
+      else if (code === 'transcription-failed') setMicError(t('micTranscriptionFailed'));
+      else if (code === 'transcription-unavailable') setMicError(t('micTranscriptionUnavailable'));
+      else if (code === 'transcription-auth-failed') setMicError(t('micTranscriptionAuthFailed'));
+      else if (code === 'transcription-quota-exceeded') setMicError(t('micTranscriptionQuotaExceeded'));
+      else if (code === 'tts-failed') setMicError(t('ttsPlaybackFailed'));
+      else setMicError(t('micError'));
+    },
+    [t],
+  );
+
   const patientLiveCall = useLiveVoiceCall({
     listenLang,
     speakLang,
     sessionLang: micSessionLang,
     sendMessage,
-    speakReplies: false,
+    speakReplies: true,
     voiceTurn: sessionId
       ? {
           sessionId,
@@ -433,17 +453,7 @@ export default function SimulationPage() {
         }
       : undefined,
     disabled: voiceCallContext !== 'patient' || sessionLocked,
-    onError: (code) => {
-      if (code === 'not-supported') setMicError(t('liveCallNotSupported'));
-      else if (code === 'not-allowed') setMicError(t('micPermissionDenied'));
-      else if (code === 'no-speech') setMicError('');
-      else if (code === 'network') setMicError(t('micNetworkError'));
-      else if (code === 'audio-capture') setMicError(t('micCaptureError'));
-      else if (code === 'start-failed') setMicError(t('micStartFailed'));
-      else if (code === 'transcription-failed') setMicError(t('micTranscriptionFailed'));
-      else if (code === 'transcription-unavailable') setMicError(t('micTranscriptionUnavailable'));
-      else setMicError(t('micError'));
-    },
+    onError: handleLiveCallError,
   });
 
   const examinerLiveCall = useLiveVoiceCall({
@@ -451,6 +461,7 @@ export default function SimulationPage() {
     speakLang,
     sessionLang: micSessionLang,
     sendMessage,
+    speakReplies: true,
     voiceTurn: sessionId
       ? {
           sessionId,
@@ -459,17 +470,7 @@ export default function SimulationPage() {
         }
       : undefined,
     disabled: voiceCallContext !== 'examiner' || sessionLocked,
-    onError: (code) => {
-      if (code === 'not-supported') setMicError(t('liveCallNotSupported'));
-      else if (code === 'not-allowed') setMicError(t('micPermissionDenied'));
-      else if (code === 'no-speech') setMicError('');
-      else if (code === 'network') setMicError(t('micNetworkError'));
-      else if (code === 'audio-capture') setMicError(t('micCaptureError'));
-      else if (code === 'start-failed') setMicError(t('micStartFailed'));
-      else if (code === 'transcription-failed') setMicError(t('micTranscriptionFailed'));
-      else if (code === 'transcription-unavailable') setMicError(t('micTranscriptionUnavailable'));
-      else setMicError(t('micError'));
-    },
+    onError: handleLiveCallError,
   });
 
   const isPatientLiveCall = voiceCallContext === 'patient';
@@ -589,10 +590,6 @@ export default function SimulationPage() {
   useEffect(() => {
     loadSession();
   }, [loadSession]);
-
-  useEffect(() => {
-    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [session?.messages, activeStage, activeManeuver, sending]);
 
   const initExaminerViva = useCallback(async () => {
     if (!sessionId) return;
@@ -1395,9 +1392,9 @@ function ExaminationView({
   }
 
   return (
-    <div className="flex-1 flex flex-col overflow-hidden">
+    <div className="flex-1 flex flex-col overflow-hidden min-h-0">
       {/* Station header */}
-      <div className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-5 py-3 flex items-center justify-between">
+      <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-5 py-3 flex items-center justify-between">
         <div>
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
             {activeManeuverMeta.nameEn} · {t("observationStation")}
@@ -1413,19 +1410,21 @@ function ExaminationView({
         )}
       </div>
 
-      <div className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-0 overflow-hidden">
         {activeManeuver && (
-          <ClinicalStationPanel
-            maneuverId={activeManeuver}
-            examImages={examImages}
-            isAr={isAr}
-            t={t}
-          />
+          <div className="shrink-0 lg:w-[42%] lg:max-w-md lg:border-r border-slate-200 dark:border-slate-800 overflow-y-auto max-h-[40vh] lg:max-h-none p-4">
+            <ClinicalStationPanel
+              maneuverId={activeManeuver}
+              examImages={examImages}
+              isAr={isAr}
+              t={t}
+            />
+          </div>
         )}
 
-        {/* Clinical examiner chat */}
-        <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col min-h-[280px]">
-          <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800 rounded-t-xl">
+        {/* Clinical examiner chat — full remaining height */}
+        <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-slate-900 lg:rounded-none border-t lg:border-t-0 border-slate-200 dark:border-slate-800">
+          <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
             <div className="px-4 py-3 flex items-center justify-between gap-3">
               <div className="flex items-center gap-2 min-w-0">
                 <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
@@ -1464,37 +1463,37 @@ function ExaminationView({
             </div>
           </div>
 
-          <div
-            className="flex-1 min-h-0 p-4 overflow-y-auto space-y-3 max-h-64"
-            dir="ltr"
-          >
-            {messages.length === 0 ? (
+          <ChatScrollArea
+            endRef={chatEndRef}
+            scrollDeps={[messages, sending]}
+            forceScroll={sending}
+            empty={messages.length === 0}
+            emptyContent={
               <p className="text-sm text-slate-400 text-center py-6">
                 {t("examinerWillStart")}
               </p>
-            ) : (
-              messages.map((msg) => (
+            }
+          >
+            {messages.map((msg) => (
+              <div
+                key={msg.id}
+                className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
+              >
                 <div
-                  key={msg.id}
-                  className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
+                  className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm ${
+                    msg.role === "STUDENT"
+                      ? "bg-primary text-white rounded-br-sm"
+                      : "bg-amber-50 border border-amber-100 text-amber-950 rounded-bl-sm"
+                  }`}
                 >
-                  <div
-                    className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm ${
-                      msg.role === "STUDENT"
-                        ? "bg-primary text-white rounded-br-sm"
-                        : "bg-amber-50 border border-amber-100 text-amber-950 rounded-bl-sm"
-                    }`}
-                  >
-                    <span dir="auto">{msg.content}</span>
-                  </div>
+                  <span dir="auto">{msg.content}</span>
                 </div>
-              ))
-            )}
+              </div>
+            ))}
             {sending && <ChatTypingIndicator label={t("examinerTyping")} />}
-            <div ref={chatEndRef} />
-          </div>
+          </ChatScrollArea>
 
-          <div className="border-t border-slate-100 dark:border-slate-800">
+          <div className="shrink-0 border-t border-slate-100 dark:border-slate-800">
             <div className="px-4 pt-3 flex justify-end">
               <button
                 type="button"
@@ -1722,64 +1721,64 @@ function HistoryChatView({
           </div>
         </div>
 
-        <div
-          className="flex-1 min-h-0 p-3 sm:p-4 overflow-y-auto overscroll-y-contain space-y-2 sm:space-y-3 bg-white dark:bg-slate-900"
-          dir="ltr"
-        >
-          {messages.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-full text-slate-400 dark:text-slate-500 py-12">
-              {isExaminerChat ? (
-                <>
-                  <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
-                    <Shield
-                      size={32}
-                      className="text-slate-300 dark:text-slate-500"
-                    />
-                  </div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200">
-                    {t("examinerBox")}
-                  </p>
-                  <p className="text-sm mt-1 text-center max-w-sm">
-                    {t("startExaminerViva")}
-                  </p>
-                </>
-              ) : (
-                <>
-                  <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
-                    <UserCircle
-                      size={32}
-                      className="text-slate-300 dark:text-slate-500"
-                    />
-                  </div>
-                  <p className="font-medium text-slate-700 dark:text-slate-200">
-                    {t("simulatedInterview")}
-                  </p>
-                  <p className="text-sm mt-1 text-center max-w-sm">
-                    {t("startInterview")}
-                  </p>
-                </>
-              )}
-            </div>
-          ) : (
-            messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
-              >
-                <div
-                  className={`max-w-[88%] sm:max-w-[80%] px-3 py-2 sm:px-4 sm:py-2.5 rounded-2xl text-xs sm:text-sm leading-snug ${
-                    msg.role === "STUDENT"
-                      ? "bg-primary text-white rounded-br-md"
-                      : msg.role === "EXAMINER"
-                        ? "bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100 rounded-bl-md"
-                        : "bg-teal-50 dark:bg-slate-800 border border-teal-100 dark:border-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md"
-                  }`}
-                >
-                  <span dir="auto">{msg.content}</span>
+        <ChatScrollArea
+          endRef={chatEndRef}
+          scrollDeps={[messages, sending]}
+          forceScroll={sending}
+          empty={messages.length === 0}
+          className="bg-white dark:bg-slate-900"
+          emptyContent={
+            isExaminerChat ? (
+              <div className="flex flex-col items-center text-slate-400 dark:text-slate-500 py-8">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
+                  <Shield
+                    size={32}
+                    className="text-slate-300 dark:text-slate-500"
+                  />
                 </div>
+                <p className="font-medium text-slate-700 dark:text-slate-200">
+                  {t("examinerBox")}
+                </p>
+                <p className="text-sm mt-1 text-center max-w-sm">
+                  {t("startExaminerViva")}
+                </p>
               </div>
-            ))
-          )}
+            ) : (
+              <div className="flex flex-col items-center text-slate-400 dark:text-slate-500 py-8">
+                <div className="w-16 h-16 rounded-2xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center mb-3">
+                  <UserCircle
+                    size={32}
+                    className="text-slate-300 dark:text-slate-500"
+                  />
+                </div>
+                <p className="font-medium text-slate-700 dark:text-slate-200">
+                  {t("simulatedInterview")}
+                </p>
+                <p className="text-sm mt-1 text-center max-w-sm">
+                  {t("startInterview")}
+                </p>
+              </div>
+            )
+          }
+        >
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[88%] sm:max-w-[80%] px-3 py-2 sm:px-4 sm:py-2.5 rounded-2xl text-xs sm:text-sm leading-snug ${
+                  msg.role === "STUDENT"
+                    ? "bg-primary text-white rounded-br-md"
+                    : msg.role === "EXAMINER"
+                      ? "bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-amber-900 dark:text-amber-100 rounded-bl-md"
+                      : "bg-teal-50 dark:bg-slate-800 border border-teal-100 dark:border-slate-700 text-slate-800 dark:text-slate-100 rounded-bl-md"
+                }`}
+              >
+                <span dir="auto">{msg.content}</span>
+              </div>
+            </div>
+          ))}
           {sending && (
             <ChatTypingIndicator
               label={
@@ -1787,8 +1786,7 @@ function HistoryChatView({
               }
             />
           )}
-          <div ref={chatEndRef} />
-        </div>
+        </ChatScrollArea>
 
         <div className="shrink-0 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
           {(isLiveCall || micError) && (
@@ -1913,177 +1911,183 @@ function DiagnosisView({
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-slate-50 dark:bg-slate-950">
-      <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 md:py-10">
-        <div className="flex justify-center mb-6">
-          <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-primary/30 text-primary text-[11px] font-semibold tracking-wider uppercase bg-white dark:bg-slate-900 shadow-sm">
-            <Stethoscope size={14} />
-            {t("diagnosticFinalizationStation")}
-          </span>
-        </div>
-
-        <h1 className="text-3xl md:text-4xl font-bold text-center text-slate-900 dark:text-white mb-3">
-          {t("clinicalFormulation")}
-        </h1>
-        <p className="text-center text-slate-500 dark:text-slate-400 max-w-2xl mx-auto mb-10 text-sm md:text-base leading-relaxed">
-          {t("clinicalFormulationDesc")}
-        </p>
-
-        <div className="grid md:grid-cols-2 gap-6 mb-8">
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-6">
-            <div className="flex items-center gap-2 mb-4 text-teal-600 dark:text-teal-400">
-              <Search size={18} />
-              <span className="text-xs font-bold tracking-wider uppercase">
-                {t("diagnosticImpression")}
-              </span>
-            </div>
-            <textarea
-              className="w-full min-h-[220px] rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 p-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 resize-y focus:outline-none focus:ring-2 focus:ring-teal-500/30"
-              placeholder={t("diagnosticImpressionPlaceholder")}
-              value={impression}
-              onChange={(e) => setImpression(e.target.value)}
-              disabled={sending || sessionLocked}
-            />
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
+      <div className="flex-1 min-h-0 overflow-y-auto">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 py-8 md:py-10">
+          <div className="flex justify-center mb-6">
+            <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full border border-primary/30 text-primary text-[11px] font-semibold tracking-wider uppercase bg-white dark:bg-slate-900 shadow-sm">
+              <Stethoscope size={14} />
+              {t("diagnosticFinalizationStation")}
+            </span>
           </div>
 
-          <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-6">
-            <div className="flex items-center gap-2 mb-4 text-emerald-600 dark:text-emerald-400">
-              <ClipboardCheck size={18} />
-              <span className="text-xs font-bold tracking-wider uppercase">
-                {t("initialManagement")}
-              </span>
-            </div>
-            <textarea
-              className="w-full min-h-[220px] rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 p-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 resize-y focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
-              placeholder={t("initialManagementPlaceholder")}
-              value={management}
-              onChange={(e) => setManagement(e.target.value)}
-              disabled={sending || sessionLocked}
-            />
-          </div>
-        </div>
-
-        <div className="flex flex-col items-center gap-3 mb-10">
-          {(chatError || completeError) && (
-            <p className="text-sm text-red-500 text-center">{chatError || completeError}</p>
-          )}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
-            <button
-              onClick={() => void handleCompleteAndEvaluate()}
-              disabled={completing || sending || sessionLocked}
-              className="btn-primary px-8 min-w-[220px] flex items-center justify-center gap-2"
-            >
-              {completing || sending ? (
-                <>
-                  <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                  {completing ? t("generatingFeedback") : t("examinerTyping")}
-                </>
-              ) : (
-                t("completeSession")
-              )}
-            </button>
-            <button
-              onClick={() => void handleLearnWithExaminer()}
-              disabled={
-                completing ||
-                sending ||
-                sessionLocked ||
-                (!impression.trim() && !management.trim())
-              }
-              className="btn-secondary px-6 min-w-[220px] flex items-center justify-center gap-2 disabled:opacity-50"
-              title={t("learnWithExaminerHint")}
-            >
-              <GraduationCap size={18} />
-              {t("learnWithExaminer")}
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 text-center max-w-md">
-            {t("learnWithExaminerHint")}
+          <h1 className="text-3xl md:text-4xl font-bold text-center text-slate-900 dark:text-white mb-3">
+            {t("clinicalFormulation")}
+          </h1>
+          <p className="text-center text-slate-500 dark:text-slate-400 max-w-2xl mx-auto mb-10 text-sm md:text-base leading-relaxed">
+            {t("clinicalFormulationDesc")}
           </p>
-        </div>
 
-        <div className="card overflow-hidden mb-6 flex flex-col">
-          <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-            <div className="px-4 py-3 flex items-center justify-between gap-3">
-              <h3 className="text-xs font-bold text-slate-400 uppercase">
-                {t("clinicalExaminer")}
-              </h3>
-              <div className="flex items-center gap-2 shrink-0">
-                <SpeechLanguageToggle
-                  value={lang}
-                  onChange={setLang}
-                  disabled={sending || isLiveCall || sessionLocked}
-                  labels={{
-                    auto: t('speechLangAuto'),
-                    ar: t('speechLangAr'),
-                    en: t('speechLangEn'),
-                  }}
-                />
-                <LiveCallButton
-                  isLiveCall={isLiveCall}
-                  isLiveCallBusy={isLiveCallBusy}
-                  isLiveCallSupported={isLiveCallSupported}
-                  onToggleLiveCall={onToggleLiveCall}
-                  liveCallLabel={liveCallLabel}
-                  endLiveCallLabel={endLiveCallLabel}
-                  disabled={sending || sessionLocked}
-                />
+          <div className="grid md:grid-cols-2 gap-6 mb-8">
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-6">
+              <div className="flex items-center gap-2 mb-4 text-teal-600 dark:text-teal-400">
+                <Search size={18} />
+                <span className="text-xs font-bold tracking-wider uppercase">
+                  {t("diagnosticImpression")}
+                </span>
               </div>
+              <textarea
+                className="w-full min-h-[220px] rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 p-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 resize-y focus:outline-none focus:ring-2 focus:ring-teal-500/30"
+                placeholder={t("diagnosticImpressionPlaceholder")}
+                value={impression}
+                onChange={(e) => setImpression(e.target.value)}
+                disabled={sending || sessionLocked}
+              />
+            </div>
+
+            <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-100 dark:border-slate-800 p-6">
+              <div className="flex items-center gap-2 mb-4 text-emerald-600 dark:text-emerald-400">
+                <ClipboardCheck size={18} />
+                <span className="text-xs font-bold tracking-wider uppercase">
+                  {t("initialManagement")}
+                </span>
+              </div>
+              <textarea
+                className="w-full min-h-[220px] rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-100 dark:border-slate-700 p-4 text-sm text-slate-700 dark:text-slate-200 placeholder:text-slate-400 resize-y focus:outline-none focus:ring-2 focus:ring-emerald-500/30"
+                placeholder={t("initialManagementPlaceholder")}
+                value={management}
+                onChange={(e) => setManagement(e.target.value)}
+                disabled={sending || sessionLocked}
+              />
             </div>
           </div>
 
-          {messages.length > 0 && (
-            <>
-              <div
-                className="max-h-72 min-h-0 p-4 overflow-y-auto space-y-3 bg-white dark:bg-slate-900"
-                dir="ltr"
-              >
-                {messages.map((msg) => (
-                  <div
-                    key={msg.id}
-                    className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
-                  >
-                    <div
-                      className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${msg.role === "STUDENT" ? "bg-primary text-white" : "bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-800 text-amber-950 dark:text-amber-100"}`}
-                    >
-                      <span dir="auto">{msg.content}</span>
-                    </div>
-                  </div>
-                ))}
-                {sending && <ChatTypingIndicator label={t("examinerTyping")} />}
-                <div ref={chatEndRef} />
-              </div>
-            </>
-          )}
-          <div className="shrink-0 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
-            {(isLiveCall || micError) && (
-              <LiveCallMicStatus
-                isLiveCall={isLiveCall}
-                isBusy={isLiveCallBusy}
-                isMicListening={isLiveCallMicListening}
-                isSpeaking={isLiveCallSpeaking}
-                error={isLiveCall ? micError : undefined}
-              />
+          <div className="flex flex-col items-center gap-3 mb-6">
+            {(chatError || completeError) && (
+              <p className="text-sm text-red-500 text-center">{chatError || completeError}</p>
             )}
-            <SimulationChatInput
-              input={input}
-              setInput={setInput}
-              onSend={() => sendMessage()}
-              sending={sending}
-              placeholder={t("askExaminer")}
-              chatError={chatError}
-              isListening={isListening}
-              isProcessing={isProcessing}
-              isMicSupported={isMicSupported}
-              onToggleMic={onToggleMic}
-              micListeningLabel={t("micListening")}
-              micNotSupportedLabel={t("micNotSupported")}
-              micProcessingLabel={t("micProcessing")}
-              micError={micError}
-              disabled={isLiveCall || sessionLocked}
-              isLiveCall={isLiveCall}
-            />
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+              <button
+                onClick={() => void handleCompleteAndEvaluate()}
+                disabled={completing || sending || sessionLocked}
+                className="btn-primary px-8 min-w-[220px] flex items-center justify-center gap-2"
+              >
+                {completing || sending ? (
+                  <>
+                    <span className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                    {completing ? t("generatingFeedback") : t("examinerTyping")}
+                  </>
+                ) : (
+                  t("completeSession")
+                )}
+              </button>
+              <button
+                onClick={() => void handleLearnWithExaminer()}
+                disabled={
+                  completing ||
+                  sending ||
+                  sessionLocked ||
+                  (!impression.trim() && !management.trim())
+                }
+                className="btn-secondary px-6 min-w-[220px] flex items-center justify-center gap-2 disabled:opacity-50"
+                title={t("learnWithExaminerHint")}
+              >
+                <GraduationCap size={18} />
+                {t("learnWithExaminer")}
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 text-center max-w-md">
+              {t("learnWithExaminerHint")}
+            </p>
           </div>
+        </div>
+      </div>
+
+      <div className="shrink-0 sm:shrink sm:min-h-[280px] sm:max-h-[45vh] sm:flex-1 card overflow-hidden flex flex-col border-t border-slate-200 dark:border-slate-800 rounded-none sm:rounded-t-2xl mx-0 sm:mx-4 sm:mb-4">
+        <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
+          <div className="px-4 py-3 flex items-center justify-between gap-3">
+            <h3 className="text-xs font-bold text-slate-400 uppercase">
+              {t("clinicalExaminer")}
+            </h3>
+            <div className="flex items-center gap-2 shrink-0">
+              <SpeechLanguageToggle
+                value={lang}
+                onChange={setLang}
+                disabled={sending || isLiveCall || sessionLocked}
+                labels={{
+                  auto: t('speechLangAuto'),
+                  ar: t('speechLangAr'),
+                  en: t('speechLangEn'),
+                }}
+              />
+              <LiveCallButton
+                isLiveCall={isLiveCall}
+                isLiveCallBusy={isLiveCallBusy}
+                isLiveCallSupported={isLiveCallSupported}
+                onToggleLiveCall={onToggleLiveCall}
+                liveCallLabel={liveCallLabel}
+                endLiveCallLabel={endLiveCallLabel}
+                disabled={sending || sessionLocked}
+              />
+            </div>
+          </div>
+        </div>
+
+        <ChatScrollArea
+          endRef={chatEndRef}
+          scrollDeps={[messages, sending]}
+          forceScroll={sending}
+          empty={messages.length === 0}
+          className="bg-white dark:bg-slate-900 min-h-[120px]"
+          emptyContent={
+            <p className="text-sm text-slate-400 text-center py-4">
+              {t("askExaminer")}
+            </p>
+          }
+        >
+          {messages.map((msg) => (
+            <div
+              key={msg.id}
+              className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
+            >
+              <div
+                className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm whitespace-pre-wrap ${msg.role === "STUDENT" ? "bg-primary text-white" : "bg-amber-50 dark:bg-amber-950/40 border border-amber-100 dark:border-amber-800 text-amber-950 dark:text-amber-100"}`}
+              >
+                <span dir="auto">{msg.content}</span>
+              </div>
+            </div>
+          ))}
+          {sending && <ChatTypingIndicator label={t("examinerTyping")} />}
+        </ChatScrollArea>
+
+        <div className="shrink-0 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+          {(isLiveCall || micError) && (
+            <LiveCallMicStatus
+              isLiveCall={isLiveCall}
+              isBusy={isLiveCallBusy}
+              isMicListening={isLiveCallMicListening}
+              isSpeaking={isLiveCallSpeaking}
+              error={isLiveCall ? micError : undefined}
+            />
+          )}
+          <SimulationChatInput
+            input={input}
+            setInput={setInput}
+            onSend={() => sendMessage()}
+            sending={sending}
+            placeholder={t("askExaminer")}
+            chatError={chatError}
+            isListening={isListening}
+            isProcessing={isProcessing}
+            isMicSupported={isMicSupported}
+            onToggleMic={onToggleMic}
+            micListeningLabel={t("micListening")}
+            micNotSupportedLabel={t("micNotSupported")}
+            micProcessingLabel={t("micProcessing")}
+            micError={micError}
+            disabled={isLiveCall || sessionLocked}
+            isLiveCall={isLiveCall}
+          />
         </div>
       </div>
     </div>

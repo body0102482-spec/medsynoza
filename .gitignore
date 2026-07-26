@@ -11,3 +11,8 @@ Thumbs.db
 coverage/
 deploy/server.env.production
 deploy/synoza-deploy.tar.gz
+
+# Transformers.js model cache (large ONNX files, downloaded at runtime)
+server/.cache/
+.cache/transformers/
+*.onnx

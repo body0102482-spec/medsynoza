@@ -4,10 +4,17 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import { WaveFile } from 'wavefile';
+import wavefile from 'wavefile';
 import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from '@xenova/transformers';
 
 const execFileAsync = promisify(execFile);
+
+// wavefile is CJS — named ESM import fails under Node; use default export.
+const WaveFile = (wavefile as unknown as { WaveFile: new (buffer?: Buffer) => {
+  toBitDepth: (depth: string) => void;
+  toSampleRate: (rate: number) => void;
+  getSamples: (channel?: boolean, type?: typeof Float32Array) => unknown;
+} }).WaveFile;
 
 function resolveWhisperLanguage(language: string, forceArabic?: boolean): 'ar' | 'en' | 'auto' {
   if (forceArabic) return 'ar';
@@ -21,7 +28,8 @@ function resolveWhisperLanguage(language: string, forceArabic?: boolean): 'ar' |
 let transcriberPromise: Promise<AutomaticSpeechRecognitionPipeline> | null = null;
 
 function resolveLocalWhisperModel(): string {
-  return process.env.LOCAL_WHISPER_MODEL?.trim() || 'Xenova/whisper-small';
+  // Keep the API process stable on low-memory development machines.
+  return process.env.LOCAL_WHISPER_MODEL?.trim() || 'Xenova/whisper-tiny';
 }
 
 async function getFfmpegExecutable(): Promise<string> {
@@ -88,7 +96,9 @@ function measureAudioLevel(samples: Float32Array): { rms: number; peak: number }
 
 function audioLooksLikeSpeech(samples: Float32Array): boolean {
   const { rms, peak } = measureAudioLevel(samples);
-  return rms >= 0.007 && peak >= 0.025;
+  // Browser noise suppression and laptop microphones can produce quiet but valid speech.
+  // Keep this below the client VAD threshold so accepted recordings are not rejected here.
+  return rms >= 0.0025 && peak >= 0.01;
 }
 
 function pickTranscriptText(result: unknown): string {
@@ -115,7 +125,9 @@ async function getTranscriber(): Promise<AutomaticSpeechRecognitionPipeline> {
 
     const model = resolveLocalWhisperModel();
     console.info('[local-stt] loading model', model);
-    transcriberPromise = pipeline('automatic-speech-recognition', model) as Promise<AutomaticSpeechRecognitionPipeline>;
+    transcriberPromise = pipeline('automatic-speech-recognition', model, {
+      quantized: true,
+    }) as Promise<AutomaticSpeechRecognitionPipeline>;
   }
   return transcriberPromise;
 }

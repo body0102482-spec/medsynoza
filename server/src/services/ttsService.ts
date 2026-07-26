@@ -7,9 +7,17 @@ function getOpenAIClient(): OpenAI | null {
   return new OpenAI({ apiKey });
 }
 
+function looksAlreadyColloquial(text: string): boolean {
+  return /مش|عايز|عايزة|كده|دلوقتي|إيه|ازيك|عندي/.test(text);
+}
+
 export async function synthesizeSpeech(text: string, lang: string): Promise<Buffer> {
   const isArabic = lang.toLowerCase().startsWith('ar');
-  const trimmed = (isArabic ? toEgyptianColloquial(text) : text).trim().slice(0, 4096);
+  // Prefer the exact reply from the patient engine; only colloquialize formal leftovers.
+  const raw = text.trim().slice(0, 4096);
+  const trimmed = (
+    isArabic && !looksAlreadyColloquial(raw) ? toEgyptianColloquial(raw) : raw
+  ).trim();
   if (!trimmed) {
     throw new Error('empty-text');
   }
@@ -34,9 +42,12 @@ export async function synthesizeSpeech(text: string, lang: string): Promise<Buff
       ? {
           instructions:
             process.env.OPENAI_TTS_INSTRUCTIONS_AR ||
-            'Speak in natural Egyptian Arabic colloquial (عامية مصرية) like a patient in a Cairo clinic. Warm, clear, conversational tone.',
+            'Speak in natural Egyptian Arabic colloquial (عامية مصرية) like a patient in a Cairo clinic. Warm, clear, conversational tone. Speak the provided text accurately without omitting or inventing content.',
         }
-      : {}),
+      : {
+          instructions:
+            'Speak the provided text accurately and clearly without omitting or inventing content.',
+        }),
   });
 
   return Buffer.from(await response.arrayBuffer());

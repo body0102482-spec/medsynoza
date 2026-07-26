@@ -5,10 +5,13 @@ import api from '../../lib/api';
 import {
   ALL_MANEUVERS,
   DEFAULT_STATION_CONFIG,
+  DEFAULT_PATIENT_BEHAVIOR,
   DEFAULT_MANEUVER_OPENING_TEMPLATE,
   MAIN_STAGES,
   MANEUVER_LABELS,
   type MainStageId,
+  type PatientBehavior,
+  type PatientPreferredLanguage,
 } from '../../lib/stationConfig';
 
 type ManeuverId = 'inspection' | 'palpation' | 'percussion' | 'auscultation';
@@ -131,6 +134,7 @@ interface CaseFormPayload {
     stageOrder: MainStageId[];
     maneuverOpeningMessages: Partial<Record<ManeuverId, string>>;
     maneuverLabels: Partial<Record<ManeuverId, { en: string; ar: string }>>;
+    patientBehavior: PatientBehavior;
   };
 }
 
@@ -163,6 +167,7 @@ function cloneForm(value: CaseFormPayload): CaseFormPayload {
 function normalizeStationConfig(
   raw?: Partial<CaseFormPayload['stationConfig']> | null,
 ): CaseFormPayload['stationConfig'] {
+  const behavior = raw?.patientBehavior;
   return {
     enabledManeuvers: raw?.enabledManeuvers?.length ? [...raw.enabledManeuvers] : [...ALL_MANEUVERS],
     enableHistoryExaminer: raw?.enableHistoryExaminer !== false,
@@ -170,6 +175,16 @@ function normalizeStationConfig(
     stageOrder: raw?.stageOrder?.length ? [...raw.stageOrder] : [...MAIN_STAGES],
     maneuverOpeningMessages: { ...(raw?.maneuverOpeningMessages ?? {}) },
     maneuverLabels: { ...(raw?.maneuverLabels ?? {}) },
+    patientBehavior: {
+      instructions: behavior?.instructions ?? '',
+      tone: behavior?.tone ?? '',
+      emotion: behavior?.emotion ?? '',
+      preferredLanguage:
+        behavior?.preferredLanguage === 'AR' || behavior?.preferredLanguage === 'EN'
+          ? behavior.preferredLanguage
+          : 'AUTO',
+      constraints: behavior?.constraints ?? '',
+    },
   };
 }
 
@@ -227,6 +242,7 @@ function emptyForm(specialtyId = '', difficultyId = '', categoryId = ''): CaseFo
       stageOrder: [...MAIN_STAGES],
       maneuverOpeningMessages: {},
       maneuverLabels: {},
+      patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
     },
   };
 }
@@ -564,6 +580,7 @@ export function AdminCasesTab() {
           stageOrder: [...form.stationConfig.stageOrder],
           maneuverOpeningMessages: { ...form.stationConfig.maneuverOpeningMessages },
           maneuverLabels: { ...form.stationConfig.maneuverLabels },
+          patientBehavior: { ...form.stationConfig.patientBehavior },
         },
       ),
     );
@@ -1273,6 +1290,81 @@ export function AdminCasesTab() {
                     </div>
                   );})}
                 </div>
+                <div className="space-y-3 pt-2 border-t border-violet-200/60 dark:border-violet-900/40">
+                  <p className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                    {t('adminCasePatientBehavior')}
+                  </p>
+                  <p className="text-[11px] text-slate-500">{t('adminCasePatientBehaviorOverrideHint')}</p>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    <input
+                      className="input-field text-sm"
+                      placeholder={t('adminCasePatientTone')}
+                      value={overrideDraft.patientBehavior.tone}
+                      onChange={(e) =>
+                        setOverrideDraft({
+                          ...overrideDraft,
+                          patientBehavior: { ...overrideDraft.patientBehavior, tone: e.target.value },
+                        })
+                      }
+                    />
+                    <input
+                      className="input-field text-sm"
+                      placeholder={t('adminCasePatientEmotion')}
+                      value={overrideDraft.patientBehavior.emotion}
+                      onChange={(e) =>
+                        setOverrideDraft({
+                          ...overrideDraft,
+                          patientBehavior: { ...overrideDraft.patientBehavior, emotion: e.target.value },
+                        })
+                      }
+                    />
+                  </div>
+                  <select
+                    className="input-field text-sm"
+                    value={overrideDraft.patientBehavior.preferredLanguage}
+                    onChange={(e) =>
+                      setOverrideDraft({
+                        ...overrideDraft,
+                        patientBehavior: {
+                          ...overrideDraft.patientBehavior,
+                          preferredLanguage: e.target.value as PatientPreferredLanguage,
+                        },
+                      })
+                    }
+                  >
+                    <option value="AUTO">{t('speechLangAuto')}</option>
+                    <option value="AR">{t('speechLangAr')}</option>
+                    <option value="EN">{t('speechLangEn')}</option>
+                  </select>
+                  <textarea
+                    className="input-field min-h-[80px] text-sm"
+                    placeholder={t('adminCasePatientInstructions')}
+                    value={overrideDraft.patientBehavior.instructions}
+                    onChange={(e) =>
+                      setOverrideDraft({
+                        ...overrideDraft,
+                        patientBehavior: {
+                          ...overrideDraft.patientBehavior,
+                          instructions: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                  <textarea
+                    className="input-field min-h-[72px] text-sm"
+                    placeholder={t('adminCasePatientConstraints')}
+                    value={overrideDraft.patientBehavior.constraints}
+                    onChange={(e) =>
+                      setOverrideDraft({
+                        ...overrideDraft,
+                        patientBehavior: {
+                          ...overrideDraft.patientBehavior,
+                          constraints: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </div>
                 <button type="button" onClick={() => void saveUniversityOverride()} disabled={overrideSaving} className="btn-primary">
                   {t('adminCaseSaveOverride')}
                 </button>
@@ -1540,6 +1632,104 @@ export function AdminCasesTab() {
             <textarea className="input-field min-h-[180px]" placeholder={t('adminCaseScenarioPrompt')} value={form.scenarioPrompt} onChange={(e) => setForm({ ...form, scenarioPrompt: e.target.value })} />
             <input className="input-field" placeholder={t('adminCaseFinalDiagnosis')} value={form.finalDiagnosis} onChange={(e) => setForm({ ...form, finalDiagnosis: e.target.value })} />
             <textarea className="input-field min-h-[100px]" placeholder={t('adminCaseTeachingPoints')} value={form.teachingPoints} onChange={(e) => setForm({ ...form, teachingPoints: e.target.value })} />
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800 space-y-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
+                {t('adminCasePatientBehavior')}
+              </p>
+              <p className="text-xs text-slate-500 mt-1">{t('adminCasePatientBehaviorHint')}</p>
+            </div>
+            <div className="grid sm:grid-cols-2 gap-3">
+              <input
+                className="input-field"
+                placeholder={t('adminCasePatientTone')}
+                value={form.stationConfig.patientBehavior.tone}
+                onChange={(e) =>
+                  updateForm({
+                    ...form,
+                    stationConfig: {
+                      ...form.stationConfig,
+                      patientBehavior: { ...form.stationConfig.patientBehavior, tone: e.target.value },
+                    },
+                  })
+                }
+              />
+              <input
+                className="input-field"
+                placeholder={t('adminCasePatientEmotion')}
+                value={form.stationConfig.patientBehavior.emotion}
+                onChange={(e) =>
+                  updateForm({
+                    ...form,
+                    stationConfig: {
+                      ...form.stationConfig,
+                      patientBehavior: { ...form.stationConfig.patientBehavior, emotion: e.target.value },
+                    },
+                  })
+                }
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-slate-500 mb-1 block">
+                {t('adminCasePatientPreferredLanguage')}
+              </label>
+              <select
+                className="input-field"
+                value={form.stationConfig.patientBehavior.preferredLanguage}
+                onChange={(e) =>
+                  updateForm({
+                    ...form,
+                    stationConfig: {
+                      ...form.stationConfig,
+                      patientBehavior: {
+                        ...form.stationConfig.patientBehavior,
+                        preferredLanguage: e.target.value as PatientPreferredLanguage,
+                      },
+                    },
+                  })
+                }
+              >
+                <option value="AUTO">{t('speechLangAuto')}</option>
+                <option value="AR">{t('speechLangAr')}</option>
+                <option value="EN">{t('speechLangEn')}</option>
+              </select>
+            </div>
+            <textarea
+              className="input-field min-h-[120px]"
+              placeholder={t('adminCasePatientInstructions')}
+              value={form.stationConfig.patientBehavior.instructions}
+              onChange={(e) =>
+                updateForm({
+                  ...form,
+                  stationConfig: {
+                    ...form.stationConfig,
+                    patientBehavior: {
+                      ...form.stationConfig.patientBehavior,
+                      instructions: e.target.value,
+                    },
+                  },
+                })
+              }
+            />
+            <textarea
+              className="input-field min-h-[100px]"
+              placeholder={t('adminCasePatientConstraints')}
+              value={form.stationConfig.patientBehavior.constraints}
+              onChange={(e) =>
+                updateForm({
+                  ...form,
+                  stationConfig: {
+                    ...form.stationConfig,
+                    patientBehavior: {
+                      ...form.stationConfig.patientBehavior,
+                      constraints: e.target.value,
+                    },
+                  },
+                })
+              }
+            />
           </div>
         </Section>
 

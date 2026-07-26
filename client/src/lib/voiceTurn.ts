@@ -1,6 +1,11 @@
 import api from './api';
 import { shouldForceArabicTranscription } from './arabicSttFix';
 
+/** Text-only turns (browser STT already done) — AI reply only. */
+export const TEXT_TURN_TIMEOUT_MS = 30_000;
+/** Audio turns — Whisper transcription + AI reply. */
+export const VOICE_TURN_TIMEOUT_MS = 60_000;
+
 export interface VoiceTurnMeta {
   endpoint: 'chat' | 'examiner';
   stage: string;
@@ -38,7 +43,7 @@ export async function postTextTurn(
       stage: meta.stage,
       maneuverId: meta.maneuverId,
     },
-    { timeout: 22000 },
+    { timeout: TEXT_TURN_TIMEOUT_MS },
   );
 
   return res.data;
@@ -56,15 +61,19 @@ export async function postVoiceTurn(
   const requestLanguage =
     sessionLang === 'AUTO' ? 'auto' : expectArabic ? 'ar-EG' : language;
 
-  const res = await api.post<VoiceTurnResponse>(`/sessions/${sessionId}/voice-turn`, {
-    audioBase64,
-    mimeType: blob.type || 'audio/webm',
-    language: requestLanguage,
-    forceArabic: expectArabic,
-    endpoint: meta.endpoint,
-    stage: meta.stage,
-    maneuverId: meta.maneuverId,
-  }, { timeout: 22000 });
+  const res = await api.post<VoiceTurnResponse>(
+    `/sessions/${sessionId}/voice-turn`,
+    {
+      audioBase64,
+      mimeType: blob.type || 'audio/webm',
+      language: requestLanguage,
+      forceArabic: expectArabic,
+      endpoint: meta.endpoint,
+      stage: meta.stage,
+      maneuverId: meta.maneuverId,
+    },
+    { timeout: VOICE_TURN_TIMEOUT_MS },
+  );
 
   return res.data;
 }

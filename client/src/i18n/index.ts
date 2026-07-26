@@ -1032,6 +1032,16 @@ export default {
       adminCaseScenarioPrompt: "AI scenario prompt for the patient role-play",
       adminCaseFinalDiagnosis: "Final diagnosis (hidden from students)",
       adminCaseTeachingPoints: "Teaching points",
+      adminCasePatientBehavior: "Station patient behavior rules",
+      adminCasePatientBehaviorHint:
+        "Per-station overrides for tone, emotion, language, custom instructions, and hard constraints. Applied during chat and live calls. University overrides can replace these.",
+      adminCasePatientBehaviorOverrideHint:
+        "Override this station’s patient behavior for the selected university only.",
+      adminCasePatientTone: "Tone (e.g. cooperative, guarded, irritable)",
+      adminCasePatientEmotion: "Emotion (e.g. anxious, calm, fearful)",
+      adminCasePatientPreferredLanguage: "Preferred session language",
+      adminCasePatientInstructions: "Custom behavioral instructions / response rules",
+      adminCasePatientConstraints: "Hard constraints (what the patient must not say or reveal)",
       saving: "Saving...",
       adminManagePlan: "Manage plan",
       adminCurrentPlan: "Current plan",
@@ -1207,9 +1217,15 @@ export default {
       micTranscriptionFailed: "Could not transcribe audio. Try again.",
       micTranscriptionUnavailable:
         "Server transcription is not configured. Contact admin.",
+      micTranscriptionAuthFailed:
+        "OpenAI transcription key is missing or invalid. Add a valid OPENAI_API_KEY and restart the server.",
+      micTranscriptionQuotaExceeded:
+        "OpenAI transcription quota is unavailable. Check billing or usage limits.",
+      ttsPlaybackFailed:
+        "Could not play the voice reply. The text reply is still in chat.",
       liveCall: "Live call",
       liveCallActive:
-        "Live call active — speak your question (text replies only)",
+        "Live call active — speak your question; replies play aloud",
       liveCallProcessing: "Transcribing and getting patient reply…",
       liveCallMicActive: "Microphone on — speak now",
       liveCallMicProcessing: "Processing your speech…",
@@ -2224,6 +2240,16 @@ export default {
       adminCaseScenarioPrompt: "سيناريو الذكاء الاصطناعي لتمثيل المريض",
       adminCaseFinalDiagnosis: "التشخيص النهائي (مخفي عن الطلاب)",
       adminCaseTeachingPoints: "نقاط تعليمية",
+      adminCasePatientBehavior: "قواعد سلوك المريض في المحطة",
+      adminCasePatientBehaviorHint:
+        "تعديلات لكل محطة: النبرة، العاطفة، اللغة، تعليمات مخصصة، وقيود صارمة. تُطبَّق في المحادثة والمكالمة المباشرة. يمكن للجامعات تجاوزها.",
+      adminCasePatientBehaviorOverrideHint:
+        "تجاوز سلوك المريض لهذه المحطة للجامعة المحددة فقط.",
+      adminCasePatientTone: "النبرة (مثلاً: متعاون، متحفظ، عصبي)",
+      adminCasePatientEmotion: "العاطفة (مثلاً: قلق، هادئ، خائف)",
+      adminCasePatientPreferredLanguage: "لغة الجلسة المفضلة",
+      adminCasePatientInstructions: "تعليمات سلوكية مخصصة / قواعد الرد",
+      adminCasePatientConstraints: "قيود صارمة (ما لا يجب أن يقوله أو يكشفه المريض)",
       saving: "جاري الحفظ...",
       adminManagePlan: "إدارة الخطة",
       adminCurrentPlan: "الخطة الحالية",
@@ -2389,8 +2415,14 @@ export default {
       micTranscriptionFailed: "تعذّر تحويل الصوت إلى نص. حاول مرة أخرى.",
       micTranscriptionUnavailable:
         "تحويل الصوت غير مفعّل على السيرفر. تواصل مع الإدارة.",
+      micTranscriptionAuthFailed:
+        "مفتاح OpenAI غير موجود أو غير صالح. أضف OPENAI_API_KEY صالحًا وأعد تشغيل السيرفر.",
+      micTranscriptionQuotaExceeded:
+        "رصيد تحويل الصوت في OpenAI غير متاح. تحقق من الفوترة وحدود الاستخدام.",
+      ttsPlaybackFailed:
+        "تعذّر تشغيل الرد الصوتي. الرد النصي موجود في المحادثة.",
       liveCall: "مكالمة مباشرة",
-      liveCallActive: "المكالمة نشطة — تكلّم وسؤالك هيتكتب (رد المريض نص بس)",
+      liveCallActive: "المكالمة نشطة — تكلّم وسؤالك هيتكتب والرد هيتشغّل صوتًا",
       liveCallProcessing: "بنفهم كلامك وبنجيب رد المريض…",
       liveCallMicActive: "الميكروفون شغال — تكلّم دلوقتي",
       liveCallMicProcessing: "بنفهم كلامك…",

@@ -17,6 +17,7 @@ import {
   looksLikeSttHallucination,
 } from './arabicSttFix.js';
 import { extractPrimaryUtterance, transcribeAudioBuffer } from './transcriptionService.js';
+import { getSessionStationConfig } from '../lib/stationConfig.js';
 
 function maneuverStage(maneuverId: string) {
   return `examination:${maneuverId}`;
@@ -173,6 +174,7 @@ async function completeTextTurn(
       voiceTurn: true,
       userId: session.userId,
       sessionId: session.id,
+      stationConfig: getSessionStationConfig(session),
     });
     replyText = sanitizeRealtimePatientTranscript(
       session.case,

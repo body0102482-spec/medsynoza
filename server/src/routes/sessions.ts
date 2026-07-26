@@ -23,7 +23,7 @@ import {
   respondToHistoryVivaAnswer,
 } from '../services/examinerVivaService.js';
 import { Language, MessageRole } from '@prisma/client';
-import { getSessionStationConfig, isManeuverEnabled, resolveManeuverOpeningMessage } from '../lib/stationConfig.js';
+import { getSessionStationConfig, isManeuverEnabled, parseStationConfig, resolveManeuverOpeningMessage } from '../lib/stationConfig.js';
 
 const router = Router();
 
@@ -82,12 +82,21 @@ router.post('/start', async (req, res) => {
   }
 
   const resolvedStationConfig = await serializeResolvedStationConfigForUser(caseId, userId);
+  const stationConfig = parseStationConfig(resolvedStationConfig);
+  const requestedLanguage = String(language || 'AUTO').toUpperCase();
+  const sessionLanguage =
+    requestedLanguage === 'AR' || requestedLanguage === 'EN'
+      ? requestedLanguage
+      : stationConfig.patientBehavior.preferredLanguage === 'AR' ||
+          stationConfig.patientBehavior.preferredLanguage === 'EN'
+        ? stationConfig.patientBehavior.preferredLanguage
+        : 'AUTO';
 
   const session = await prisma.session.create({
     data: {
       userId,
       caseId,
-      language: language as Language,
+      language: sessionLanguage as Language,
       resolvedStationConfig,
     },
     include: {
@@ -364,10 +373,28 @@ router.post('/:id/voice-turn', async (req, res) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Voice turn failed';
     if (message === 'recording-too-short') {
-      return res.status(400).json({ error: 'Recording too short' });
+      return res.status(400).json({
+        error: 'Recording too short or quiet',
+        code: 'recording-too-short',
+      });
     }
     if (message === 'transcription-unavailable') {
-      return res.status(503).json({ error: 'Speech transcription is not configured on the server' });
+      return res.status(503).json({
+        error: 'Speech transcription is not configured on the server',
+        code: 'transcription-unavailable',
+      });
+    }
+    if (message === 'transcription-auth-failed') {
+      return res.status(503).json({
+        error: 'The OpenAI API key is missing or invalid',
+        code: 'transcription-auth-failed',
+      });
+    }
+    if (message === 'transcription-quota-exceeded') {
+      return res.status(503).json({
+        error: 'The OpenAI transcription quota is unavailable',
+        code: 'transcription-quota-exceeded',
+      });
     }
     if (message === 'transcription-not-arabic') {
       return res.status(422).json({ error: 'Could not recognize Arabic speech — try again clearly' });
@@ -412,12 +439,17 @@ router.post('/:id/chat', async (req, res) => {
       .filter((m) => m.stage === stage)
       .map((m) => ({ role: m.role, content: m.content }));
 
+    const stationConfig = getSessionStationConfig(session);
     const patientReply = await getPatientResponse(
       session.case,
       stageHistory,
       message,
-      session.language === 'EN' ? 'EN' : 'AR',
-      { userId: req.user!.id, sessionId: session.id },
+      session.language as 'AUTO' | 'AR' | 'EN',
+      {
+        userId: req.user!.id,
+        sessionId: session.id,
+        stationConfig,
+      },
     );
 
     const patientMessage = await prisma.message.create({

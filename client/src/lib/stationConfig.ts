@@ -5,6 +5,21 @@ export const MAIN_STAGES = ['history', 'examination', 'investigations', 'diagnos
 export type MainStageId = (typeof MAIN_STAGES)[number];
 export type SimulationStageId = MainStageId | 'feedback';
 
+export type PatientPreferredLanguage = 'AUTO' | 'AR' | 'EN';
+
+export interface PatientBehavior {
+  /** Free-form behavioral guidelines / system instructions for this station. */
+  instructions: string;
+  /** Personality tone, e.g. cooperative, guarded, irritable. */
+  tone: string;
+  /** Emotional state, e.g. anxious, calm, fearful. */
+  emotion: string;
+  /** Default speech language for new sessions at this station. */
+  preferredLanguage: PatientPreferredLanguage;
+  /** Hard constraints the patient must follow (what not to say / reveal). */
+  constraints: string;
+}
+
 export interface StationConfig {
   enabledManeuvers: ManeuverId[];
   enableHistoryExaminer: boolean;
@@ -12,7 +27,16 @@ export interface StationConfig {
   stageOrder: MainStageId[];
   maneuverOpeningMessages: Partial<Record<ManeuverId, string>>;
   maneuverLabels: Partial<Record<ManeuverId, { en: string; ar: string }>>;
+  patientBehavior: PatientBehavior;
 }
+
+export const DEFAULT_PATIENT_BEHAVIOR: PatientBehavior = {
+  instructions: '',
+  tone: '',
+  emotion: '',
+  preferredLanguage: 'AUTO',
+  constraints: '',
+};
 
 export const DEFAULT_MANEUVER_OPENING_TEMPLATE =
   'I am evaluating your clinical {{maneuver}}. Take a close look at the clinical presentation and images provided. Describe your findings systematically and explain what you would look for during {{maneuver}}, including any scars, deformities, or visible abnormalities.';
@@ -31,6 +55,7 @@ export const DEFAULT_STATION_CONFIG: StationConfig = {
   stageOrder: [...MAIN_STAGES],
   maneuverOpeningMessages: {},
   maneuverLabels: {},
+  patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
 };
 
 function isManeuverId(value: unknown): value is ManeuverId {
@@ -39,6 +64,10 @@ function isManeuverId(value: unknown): value is ManeuverId {
 
 function isMainStage(value: unknown): value is MainStageId {
   return typeof value === 'string' && (MAIN_STAGES as readonly string[]).includes(value);
+}
+
+function isPreferredLanguage(value: unknown): value is PatientPreferredLanguage {
+  return value === 'AUTO' || value === 'AR' || value === 'EN';
 }
 
 function normalizeStageOrder(order: MainStageId[] | undefined): MainStageId[] {
@@ -83,6 +112,55 @@ function parseManeuverLabels(raw: unknown): Partial<Record<ManeuverId, { en: str
   return result;
 }
 
+export function parsePatientBehavior(raw: unknown): PatientBehavior {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return { ...DEFAULT_PATIENT_BEHAVIOR };
+  }
+  const obj = raw as Record<string, unknown>;
+  return {
+    instructions: typeof obj.instructions === 'string' ? obj.instructions.trim() : '',
+    tone: typeof obj.tone === 'string' ? obj.tone.trim() : '',
+    emotion: typeof obj.emotion === 'string' ? obj.emotion.trim() : '',
+    preferredLanguage: isPreferredLanguage(obj.preferredLanguage)
+      ? obj.preferredLanguage
+      : 'AUTO',
+    constraints: typeof obj.constraints === 'string' ? obj.constraints.trim() : '',
+  };
+}
+
+export function mergePatientBehavior(
+  base: PatientBehavior,
+  override?: Partial<PatientBehavior> | null,
+): PatientBehavior {
+  if (!override) return { ...base };
+  return {
+    instructions:
+      override.instructions !== undefined ? String(override.instructions).trim() : base.instructions,
+    tone: override.tone !== undefined ? String(override.tone).trim() : base.tone,
+    emotion: override.emotion !== undefined ? String(override.emotion).trim() : base.emotion,
+    preferredLanguage: isPreferredLanguage(override.preferredLanguage)
+      ? override.preferredLanguage
+      : base.preferredLanguage,
+    constraints:
+      override.constraints !== undefined ? String(override.constraints).trim() : base.constraints,
+  };
+}
+
+/** Prompt block injected into the patient system prompt when any field is set. */
+export function formatPatientBehaviorPrompt(behavior: PatientBehavior | null | undefined): string {
+  if (!behavior) return '';
+  const lines: string[] = [];
+  if (behavior.tone) lines.push(`- Tone: ${behavior.tone}`);
+  if (behavior.emotion) lines.push(`- Emotion: ${behavior.emotion}`);
+  if (behavior.preferredLanguage && behavior.preferredLanguage !== 'AUTO') {
+    lines.push(`- Preferred language: ${behavior.preferredLanguage}`);
+  }
+  if (behavior.instructions) lines.push(`- Custom instructions:\n${behavior.instructions}`);
+  if (behavior.constraints) lines.push(`- Hard constraints (must follow):\n${behavior.constraints}`);
+  if (!lines.length) return '';
+  return `\nSTATION PATIENT BEHAVIOR (admin overrides — follow these):\n${lines.join('\n')}\n`;
+}
+
 export function resolveManeuverLabel(
   maneuverId: string,
   config?: StationConfig | null,
@@ -107,6 +185,7 @@ export function parseStationConfig(raw: string | null | undefined): StationConfi
       stageOrder: [...MAIN_STAGES],
       maneuverOpeningMessages: {},
       maneuverLabels: {},
+      patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
     };
   }
   try {
@@ -123,6 +202,7 @@ export function parseStationConfig(raw: string | null | undefined): StationConfi
       ),
       maneuverOpeningMessages: parseManeuverOpeningMessages(parsed.maneuverOpeningMessages),
       maneuverLabels: parseManeuverLabels(parsed.maneuverLabels),
+      patientBehavior: parsePatientBehavior(parsed.patientBehavior),
     };
   } catch {
     return {
@@ -131,6 +211,7 @@ export function parseStationConfig(raw: string | null | undefined): StationConfi
       stageOrder: [...MAIN_STAGES],
       maneuverOpeningMessages: {},
       maneuverLabels: {},
+      patientBehavior: { ...DEFAULT_PATIENT_BEHAVIOR },
     };
   }
 }

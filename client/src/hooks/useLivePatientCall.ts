@@ -14,7 +14,14 @@ import {
   pickAudioMimeType,
   transcribeAudioBlob,
 } from '../lib/transcribe';
-import { postTextTurn, postVoiceTurn, type VoiceTurnMeta, type VoiceTurnResponse } from '../lib/voiceTurn';
+import {
+  postTextTurn,
+  postVoiceTurn,
+  TEXT_TURN_TIMEOUT_MS,
+  VOICE_TURN_TIMEOUT_MS,
+  type VoiceTurnMeta,
+  type VoiceTurnResponse,
+} from '../lib/voiceTurn';
 import { withTimeout } from '../lib/withTimeout';
 
 interface UseLiveVoiceCallOptions {
@@ -41,10 +48,14 @@ const MIN_SPEECH_MS = IS_MOBILE ? 450 : 380;
 const MAX_RECORDING_MS = 12000;
 const NO_SPEECH_TIMEOUT_MS = IS_MOBILE ? 9000 : 6000;
 const SPEECH_RMS_THRESHOLD = IS_MOBILE ? 0.004 : 0.011;
-const POST_TURN_LISTEN_DELAY_MS = IS_MOBILE ? 450 : 60;
+const POST_TURN_LISTEN_DELAY_MS = IS_MOBILE ? 450 : 80;
 const BROWSER_STT_RESTART_DELAY_MS = IS_MOBILE ? 350 : 80;
-const TURN_TIMEOUT_MS = IS_MOBILE ? 30000 : 22000;
-const BUSY_WATCHDOG_MS = IS_MOBILE ? 38000 : 28000;
+/** Client patience for text turns (browser STT path). */
+const TEXT_TURN_CLIENT_MS = TEXT_TURN_TIMEOUT_MS;
+/** Client patience for audio turns (recorder + Whisper). */
+const VOICE_TURN_CLIENT_MS = VOICE_TURN_TIMEOUT_MS;
+const BUSY_WATCHDOG_MS = VOICE_TURN_CLIENT_MS + 8_000;
+const MAX_SOFT_RETRIES = 3;
 
 function rmsFromAnalyser(analyser: AnalyserNode, buffer: Float32Array<ArrayBuffer>): number {
   analyser.getFloatTimeDomainData(buffer);
@@ -53,6 +64,45 @@ function rmsFromAnalyser(analyser: AnalyserNode, buffer: Float32Array<ArrayBuffe
     sum += buffer[i] * buffer[i];
   }
   return Math.sqrt(sum / buffer.length);
+}
+
+function setStreamMuted(stream: MediaStream | null, muted: boolean) {
+  stream?.getAudioTracks().forEach((track) => {
+    track.enabled = !muted;
+  });
+}
+
+function classifyTurnError(err: unknown): {
+  code: string;
+  status?: number;
+  fatal: boolean;
+  softRetry: boolean;
+} {
+  const code = err instanceof Error ? err.message : '';
+  const response = (err as {
+    response?: { status?: number; data?: { code?: string } };
+  })?.response;
+  const status = response?.status;
+  const serverCode = response?.data?.code;
+  if (
+    serverCode === 'transcription-auth-failed' ||
+    serverCode === 'transcription-quota-exceeded'
+  ) {
+    return { code: serverCode, status, fatal: true, softRetry: false };
+  }
+  if (status === 503) {
+    return { code: 'transcription-unavailable', status, fatal: true, softRetry: false };
+  }
+  if (code === 'turn-timeout' || code === 'transcription-timeout') {
+    return { code: 'network', status, fatal: false, softRetry: true };
+  }
+  if (status === 422 || status === 400 || code === 'transcription-invalid') {
+    return { code: 'unclear-audio', status, fatal: false, softRetry: true };
+  }
+  if (status !== undefined || code) {
+    return { code: 'transcription-failed', status, fatal: false, softRetry: false };
+  }
+  return { code: 'network', fatal: false, softRetry: true };
 }
 
 export function useLiveVoiceCall({
@@ -91,6 +141,9 @@ export function useLiveVoiceCall({
   const maxRecordingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const speechStartedAtRef = useRef(0);
   const mimeTypeRef = useRef('audio/webm');
+  const softRetryCountRef = useRef(0);
+  const turnSeqRef = useRef(0);
+  const processingTurnRef = useRef(false);
 
   sendRef.current = sendMessage;
   voiceTurnRef.current = voiceTurn;
@@ -172,8 +225,10 @@ export function useLiveVoiceCall({
 
   const endBusy = useCallback(() => {
     busyRef.current = false;
+    processingTurnRef.current = false;
     setIsBusy(false);
     clearBusyWatchdog();
+    setStreamMuted(streamRef.current, false);
     scheduleListen();
   }, [clearBusyWatchdog, scheduleListen]);
 
@@ -183,6 +238,11 @@ export function useLiveVoiceCall({
     clearBusyWatchdog();
     busyWatchdogRef.current = setTimeout(() => {
       if (!busyRef.current || !liveRef.current) return;
+      // Avoid duplicate listen if a late response is still settling.
+      if (processingTurnRef.current) {
+        onErrorRef.current?.('network');
+        return;
+      }
       busyRef.current = false;
       setIsBusy(false);
       onErrorRef.current?.('network');
@@ -193,8 +253,6 @@ export function useLiveVoiceCall({
   const ensureStream = useCallback(async (): Promise<MediaStream | null> => {
     if (streamRef.current?.active) return streamRef.current;
 
-    // Only drop the shared browser-STT mic when recognition is idle.
-    // Forcing a release mid-recognition causes live-call / mic races on mobile.
     releaseMicrophoneStream(false);
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -210,24 +268,29 @@ export function useLiveVoiceCall({
       if (!trimmed || !liveRef.current) return;
 
       if (!speakRepliesRef.current) {
-        scheduleListen(POST_TURN_LISTEN_DELAY_MS);
         return;
       }
 
       const speak = speakLangRef.current.startsWith('ar') ? 'ar-EG' : speakLangRef.current;
       speakingRef.current = true;
       setSpeaking(true);
+      // Mute mic during TTS to prevent echo / re-triggering STT.
+      setStreamMuted(streamRef.current, true);
+      abortActiveSpeechRecognition();
       try {
-        await speakText(trimmed, speak);
+        const result = await speakText(trimmed, speak);
+        if (!result.ok) {
+          onErrorRef.current?.('tts-failed');
+        }
       } catch {
-        // Ignore playback errors — text is already in chat.
+        onErrorRef.current?.('tts-failed');
       } finally {
         speakingRef.current = false;
         setSpeaking(false);
-        scheduleListen(POST_TURN_LISTEN_DELAY_MS);
+        setStreamMuted(streamRef.current, false);
       }
     },
-    [scheduleListen, setSpeaking],
+    [setSpeaking],
   );
 
   const stopCall = useCallback(() => {
@@ -235,6 +298,8 @@ export function useLiveVoiceCall({
     setIsLiveCall(false);
     busyRef.current = false;
     speakingRef.current = false;
+    processingTurnRef.current = false;
+    softRetryCountRef.current = 0;
     setIsBusy(false);
     setListening(false);
     setSpeaking(false);
@@ -242,7 +307,6 @@ export function useLiveVoiceCall({
     browserSttRef.current?.abort();
     browserSttRef.current = null;
     abortActiveSpeechRecognition();
-    // Keep shared mic stream during live call turns; force-release only when call ends.
     releaseMicrophoneStream(true);
     clearTimers();
     clearBusyWatchdog();
@@ -250,7 +314,7 @@ export function useLiveVoiceCall({
     closeAudioContext();
     releaseStream();
     stopSpeaking();
-  }, [clearBusyWatchdog, clearTimers, closeAudioContext, releaseStream, stopRecorder]);
+  }, [clearBusyWatchdog, clearTimers, closeAudioContext, releaseStream, setListening, setSpeaking, stopRecorder]);
 
   const finishRecording = useCallback(() => {
     if (!listeningRef.current) return;
@@ -267,75 +331,116 @@ export function useLiveVoiceCall({
       return;
     }
     stopRecorder();
-  }, [clearTimers, stopRecorder]);
+  }, [clearTimers, setListening, stopRecorder]);
+
+  const handleTurnFailure = useCallback(
+    (err: unknown) => {
+      const classified = classifyTurnError(err);
+      if (classified.fatal) {
+        onErrorRef.current?.(classified.code);
+        stopCall();
+        return;
+      }
+      if (classified.softRetry) {
+        softRetryCountRef.current += 1;
+        if (softRetryCountRef.current >= MAX_SOFT_RETRIES) {
+          onErrorRef.current?.(classified.code === 'unclear-audio' ? 'transcription-failed' : classified.code);
+          softRetryCountRef.current = 0;
+        } else if (classified.code !== 'unclear-audio') {
+          onErrorRef.current?.(classified.code);
+        }
+        // Keep call alive — never hard-stop on recoverable STT/network failures.
+        return;
+      }
+      onErrorRef.current?.(classified.code);
+    },
+    [stopCall],
+  );
 
   const processTextTurn = useCallback(
     async (transcript: string) => {
+      if (processingTurnRef.current) return false;
+      processingTurnRef.current = true;
       const turn = voiceTurnRef.current;
 
-      if (turn) {
-        const result = await withTimeout(
-          postTextTurn(turn.sessionId, transcript, turn.getRequestMeta()),
-          TURN_TIMEOUT_MS,
-          'turn-timeout',
-        );
-        turn.onTurn?.(result);
-        void playReply(result.replyMessage.content);
-        return !!result.transcript?.trim();
+      try {
+        if (turn) {
+          const result = await withTimeout(
+            postTextTurn(turn.sessionId, transcript, turn.getRequestMeta()),
+            TEXT_TURN_CLIENT_MS,
+            'turn-timeout',
+          );
+          if (!liveRef.current) return false;
+          softRetryCountRef.current = 0;
+          turn.onTurn?.(result);
+          await playReply(result.replyMessage.content);
+          return !!result.transcript?.trim();
+        }
+
+        if (!transcript?.trim() || !liveRef.current) return false;
+
+        const result = await sendRef.current(transcript);
+        if (!liveRef.current) return false;
+
+        if (result.success && result.reply?.trim()) {
+          softRetryCountRef.current = 0;
+          await playReply(result.reply);
+        }
+
+        return true;
+      } finally {
+        processingTurnRef.current = false;
       }
-
-      if (!transcript?.trim() || !liveRef.current) return false;
-
-      const result = await sendRef.current(transcript);
-      if (!liveRef.current) return false;
-
-      if (result.success && result.reply?.trim()) {
-        void playReply(result.reply);
-      }
-
-      return true;
     },
     [playReply],
   );
 
   const processTurn = useCallback(
     async (blob: Blob) => {
-      const speak = speakLangRef.current.startsWith('ar') ? 'ar-EG' : speakLangRef.current;
+      if (processingTurnRef.current) return false;
+      processingTurnRef.current = true;
       const turn = voiceTurnRef.current;
 
-      if (turn) {
-        const result = await withTimeout(
-          postVoiceTurn(
-            turn.sessionId,
-            blob,
-            listenLangRef.current,
-            sessionLangRef.current,
-            turn.getRequestMeta(),
-          ),
-          TURN_TIMEOUT_MS,
+      try {
+        if (turn) {
+          const result = await withTimeout(
+            postVoiceTurn(
+              turn.sessionId,
+              blob,
+              listenLangRef.current,
+              sessionLangRef.current,
+              turn.getRequestMeta(),
+            ),
+            VOICE_TURN_CLIENT_MS,
+            'turn-timeout',
+          );
+          if (!liveRef.current) return false;
+          softRetryCountRef.current = 0;
+          turn.onTurn?.(result);
+          await playReply(result.replyMessage.content);
+          return !!result.transcript?.trim();
+        }
+
+        const transcript = await withTimeout(
+          transcribeAudioBlob(blob, listenLangRef.current, sessionLangRef.current),
+          VOICE_TURN_CLIENT_MS,
           'turn-timeout',
         );
-        turn.onTurn?.(result);
-        void playReply(result.replyMessage.content);
-        return !!result.transcript?.trim();
+
+        if (!transcript?.trim() || !liveRef.current) return false;
+
+        const result = await sendRef.current(transcript);
+        if (!liveRef.current) return false;
+
+        if (result.success && result.reply?.trim()) {
+          softRetryCountRef.current = 0;
+          await playReply(result.reply);
+        }
+
+        return true;
+      } finally {
+        processingTurnRef.current = false;
       }
-
-      const transcript = await withTimeout(
-        transcribeAudioBlob(blob, listenLangRef.current, sessionLangRef.current),
-        TURN_TIMEOUT_MS,
-        'turn-timeout',
-      );
-
-      if (!transcript?.trim() || !liveRef.current) return false;
-
-      const result = await sendRef.current(transcript);
-      if (!liveRef.current) return false;
-
-      if (result.success && result.reply?.trim()) {
-        void playReply(result.reply);
-      }
-
-      return true;
     },
     [playReply],
   );
@@ -349,7 +454,6 @@ export function useLiveVoiceCall({
       await waitForSpeechRecognition(BROWSER_STT_RESTART_DELAY_MS);
     }
 
-    // Do not yank an active shared mic; browser STT claims recognition ownership itself.
     releaseMicrophoneStream(false);
     listeningRef.current = true;
     setIsMicListening(true);
@@ -368,14 +472,7 @@ export function useLiveVoiceCall({
           try {
             await processTextTurn(transcript);
           } catch (err) {
-            const code = err instanceof Error ? err.message : '';
-            const status = (err as { response?: { status?: number } })?.response?.status;
-            if (status === 503 || code === 'turn-timeout') {
-              onErrorRef.current?.(status === 503 ? 'transcription-unavailable' : 'network');
-              if (status === 503) stopCall();
-            } else if (status !== 422 && status !== 400 && (status !== undefined || code === 'turn-timeout')) {
-              onErrorRef.current?.('transcription-failed');
-            }
+            handleTurnFailure(err);
           } finally {
             endBusy();
           }
@@ -401,9 +498,9 @@ export function useLiveVoiceCall({
           return;
         }
         if ((code === 'network' || code === 'start-failed') && isAudioRecordingSupported()) {
-          // Web Speech API failed — continue the call on the recorder +
-          // server transcription path (next listenOnce picks it up).
           markBrowserSttRuntimeFailure();
+          // Recorder + server STT is an automatic fallback. Do not show a stale
+          // browser-network error while that fallback is available.
           scheduleListen(150);
           return;
         }
@@ -418,7 +515,7 @@ export function useLiveVoiceCall({
     }
 
     browserSttRef.current = session;
-  }, [disabled, endBusy, processTextTurn, scheduleListen, setListening, startBusy, stopCall]);
+  }, [disabled, endBusy, handleTurnFailure, processTextTurn, scheduleListen, setListening, startBusy, stopCall]);
 
   const listenOnce = useCallback(async () => {
     if (shouldUseBrowserStt()) {
@@ -440,6 +537,7 @@ export function useLiveVoiceCall({
         setListening(false);
         return;
       }
+      setStreamMuted(stream, false);
 
       mimeTypeRef.current = pickAudioMimeType() || (IS_MOBILE ? 'audio/mp4' : 'audio/webm');
       const chunks: Blob[] = [];
@@ -449,6 +547,7 @@ export function useLiveVoiceCall({
       const startedAt = Date.now();
       let silenceStartedAt = 0;
       let peakRms = 0;
+      const turnId = ++turnSeqRef.current;
 
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) chunks.push(event.data);
@@ -467,12 +566,19 @@ export function useLiveVoiceCall({
         recorderRef.current = null;
         setListening(false);
 
+        // Drop stale stops from a previous listen cycle.
+        if (turnId !== turnSeqRef.current) return;
+
         const elapsed = Date.now() - startedAt;
         const blob = new Blob(chunks, { type: mimeTypeRef.current });
 
         if (!liveRef.current) return;
 
-        if (elapsed < MIN_SPEECH_MS || blob.size < minLiveCallBlobBytes() || speechStartedAtRef.current === 0) {
+        if (
+          elapsed < MIN_SPEECH_MS ||
+          blob.size < minLiveCallBlobBytes() ||
+          speechStartedAtRef.current === 0
+        ) {
           scheduleListen(150);
           return;
         }
@@ -482,25 +588,15 @@ export function useLiveVoiceCall({
         try {
           await processTurn(blob);
         } catch (err) {
-          const code = err instanceof Error ? err.message : '';
-          const status = (err as { response?: { status?: number } })?.response?.status;
-          if (status === 503 || code === 'turn-timeout') {
-            onErrorRef.current?.(status === 503 ? 'transcription-unavailable' : 'network');
-            if (status === 503) {
-              stopCall();
-              return;
-            }
-          } else if (status === 422 || status === 400) {
-            // Quiet retry after unclear audio.
-          } else if (status !== undefined || code === 'turn-timeout') {
-            onErrorRef.current?.('transcription-failed');
-          }
+          handleTurnFailure(err);
         } finally {
           endBusy();
         }
       };
 
-      const AudioCtx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
       if (!audioContextRef.current || audioContextRef.current.state === 'closed') {
         audioContextRef.current = AudioCtx ? new AudioCtx() : null;
       }
@@ -539,12 +635,9 @@ export function useLiveVoiceCall({
           if (!silenceStartedAt) silenceStartedAt = now;
           const speechDuration = now - speechStartedAtRef.current;
           const silenceDuration = now - silenceStartedAt;
-          const quietEnough = peakRms > 0 && rms < peakRms * 0.25;
-          if (
-            speechDuration >= MIN_SPEECH_MS &&
-            silenceDuration >= SILENCE_MS &&
-            quietEnough
-          ) {
+          // Relaxed end-of-utterance: absolute quiet OR relative drop from peak.
+          const quietEnough = rms < SPEECH_RMS_THRESHOLD * 0.85 || (peakRms > 0 && rms < peakRms * 0.35);
+          if (speechDuration >= MIN_SPEECH_MS && silenceDuration >= SILENCE_MS && quietEnough) {
             finishRecording();
             return;
           }
@@ -560,7 +653,10 @@ export function useLiveVoiceCall({
       }, NO_SPEECH_TIMEOUT_MS);
 
       maxRecordingTimerRef.current = setTimeout(() => {
+        // Always force-submit after max duration once speech was detected.
         if (listeningRef.current && speechStartedAtRef.current) {
+          finishRecording();
+        } else if (listeningRef.current) {
           finishRecording();
         }
       }, MAX_RECORDING_MS);
@@ -590,6 +686,7 @@ export function useLiveVoiceCall({
     scheduleListen,
     setListening,
     listenOnceWithBrowser,
+    handleTurnFailure,
   ]);
 
   listenOnceRef.current = () => {
@@ -609,6 +706,7 @@ export function useLiveVoiceCall({
       primeSpeechOutput();
     }
     void unlockMobileAudio();
+    softRetryCountRef.current = 0;
     liveRef.current = true;
     setIsLiveCall(true);
     void listenOnce();

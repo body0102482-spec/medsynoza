@@ -84,16 +84,37 @@ fileContains(
   'shared mic ownership helpers exist',
 );
 
-// ─── 2. AI Latency ≤2s ───────────────────────────────────────────────────────
-section('2. AI Latency ≤2s');
+// ─── 2. AI Latency (complete short replies without mid-sentence cuts) ─────────
+section('2. AI Latency budgets');
 {
   const ai = readFileSync(resolve(ROOT, 'server/src/services/aiService.ts'), 'utf8');
   const voiceTimeout = /VOICE_TIMEOUT_MS\s*=\s*(\d+)/.exec(ai);
   const chatTimeout = /CHAT_TIMEOUT_MS\s*=\s*(\d+)/.exec(ai);
-  assert(!!voiceTimeout && Number(voiceTimeout[1]) <= 2000, `voice timeout ≤2000ms`, voiceTimeout?.[1]);
-  assert(!!chatTimeout && Number(chatTimeout[1]) <= 2000, `chat timeout ≤2000ms`, chatTimeout?.[1]);
+  assert(!!voiceTimeout && Number(voiceTimeout[1]) <= 5000, `voice timeout ≤5000ms`, voiceTimeout?.[1]);
+  assert(!!voiceTimeout && Number(voiceTimeout[1]) >= 2500, `voice timeout ≥2500ms for complete replies`, voiceTimeout?.[1]);
+  assert(!!chatTimeout && Number(chatTimeout[1]) <= 6000, `chat timeout ≤6000ms`, chatTimeout?.[1]);
   assert(ai.includes('callOpenAIStream'), 'streaming completion path exists');
   assert(ai.includes('stream: true'), 'live turns request streaming');
+  assert(ai.includes('formatPatientBehaviorPrompt') || ai.includes('STATION PATIENT BEHAVIOR') || ai.includes('patientBehavior'), 'patient behavior wired into AI prompts');
+  // Global Synoza patient behavior rules seeded into every prompt (chat + voice)
+  assert(ai.includes('SYNOZA_PATIENT_CORE_RULES'), 'global Synoza patient rules constant defined');
+  const coreMatches = ai.match(/\$\{SYNOZA_PATIENT_CORE_RULES\}/g) || [];
+  assert(coreMatches.length >= 2, 'core rules injected into both chat and voice prompts', String(coreMatches.length));
+  assert(ai.includes('SYNOZA PATIENT BEHAVIOR RULES'), 'core rules block header present');
+  for (const rule of [
+    'Stay fully in character',
+    'Never invent medical facts',
+    'Respect biological reality',
+    'Correct false assumptions',
+    'Protect your dignity',
+    'Reveal no hidden knowledge',
+    "Admit when you don't know",
+    "Don't volunteer extra",
+    'Keep most answers to 1–3 sentences',
+    'gently steer back to the consultation',
+  ]) {
+    assert(ai.includes(rule), `core rule present: ${rule}`);
+  }
 }
 
 // ─── 3. Bilingual / code-switching STT ───────────────────────────────────────

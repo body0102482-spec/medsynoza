@@ -1,9 +1,12 @@
 import OpenAI, { toFile } from 'openai';
 import { fixArabicSpeechTranscript, looksLikeSttHallucination, prioritizeWellbeingTranscript, containsWrongScriptForArabic, transcriptionNeedsArabicFix } from './arabicSttFix.js';
 
-function getOpenAIClient(): OpenAI | null {
+function getOpenAIClient(): OpenAI {
   const apiKey = process.env.OPENAI_API_KEY?.trim();
-  if (!apiKey) return null;
+  if (!apiKey) throw new Error('transcription-unavailable');
+  if (/^(your[-_ ]?openai|replace[-_ ]?me|changeme)/i.test(apiKey)) {
+    throw new Error('transcription-auth-failed');
+  }
   return new OpenAI({ apiKey });
 }
 
@@ -151,7 +154,7 @@ async function transcribeWithOpenAI(
   const client = getOpenAIClient();
   const provider = (process.env.AI_PROVIDER || 'openai').toLowerCase();
 
-  if (!client || provider === 'mock') {
+  if (provider === 'mock') {
     throw new Error('transcription-unavailable');
   }
 
@@ -202,6 +205,27 @@ async function transcribeWithOpenAI(
   return finalizeTranscript(text, expectArabic, options);
 }
 
+async function transcribeWithOpenAISafe(
+  buffer: Buffer,
+  mimeType: string,
+  language: string,
+  forceArabic: boolean | undefined,
+  options?: { fast?: boolean },
+): Promise<string> {
+  try {
+    return await transcribeWithOpenAI(buffer, mimeType, language, forceArabic, options);
+  } catch (err) {
+    const openAiError = err as { status?: number; code?: string };
+    if (openAiError.status === 401 || openAiError.code === 'invalid_api_key') {
+      throw new Error('transcription-auth-failed');
+    }
+    if (openAiError.status === 429) {
+      throw new Error('transcription-quota-exceeded');
+    }
+    throw err;
+  }
+}
+
 export async function transcribeAudioBuffer(
   buffer: Buffer,
   mimeType: string,
@@ -213,14 +237,43 @@ export async function transcribeAudioBuffer(
     throw new Error('recording-too-short');
   }
 
+  // Read per process start; restart the server after changing STT_PROVIDER/FFMPEG_PATH.
   const sttProvider = (process.env.STT_PROVIDER || 'openai').toLowerCase();
   if (sttProvider === 'local') {
-    const { transcribeWithLocalWhisper } = await import('./localWhisperSttService.js');
-    const whisperLang = resolveWhisperLanguage(language, forceArabic);
-    const expectArabic = whisperLang === 'ar';
-    const raw = await transcribeWithLocalWhisper(buffer, mimeType, language, forceArabic);
-    return finalizeTranscript(raw, expectArabic, options);
+    try {
+      const { transcribeWithLocalWhisper } = await import('./localWhisperSttService.js');
+      const whisperLang = resolveWhisperLanguage(language, forceArabic);
+      const expectArabic = whisperLang === 'ar';
+      const raw = await transcribeWithLocalWhisper(buffer, mimeType, language, forceArabic);
+      return finalizeTranscript(raw, expectArabic, options);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : '';
+      // Preserve validation errors — do not fall back for bad/unclear audio.
+      if (
+        message === 'recording-too-short' ||
+        message === 'transcription-not-arabic' ||
+        message === 'transcription-prompt-leak'
+      ) {
+        throw err;
+      }
+
+      const canFallbackToOpenAI =
+        !!process.env.OPENAI_API_KEY?.trim() &&
+        (process.env.AI_PROVIDER || 'openai').toLowerCase() !== 'mock';
+
+      if (canFallbackToOpenAI) {
+        console.warn(
+          '[stt] local Whisper failed (%s) — falling back to OpenAI transcription',
+          message || (err instanceof Error ? err.name : 'unknown'),
+        );
+        return transcribeWithOpenAISafe(buffer, mimeType, language, forceArabic, options);
+      }
+
+      console.error('[stt] local Whisper failed:', err);
+      if (message === 'local-stt-ffmpeg-missing') throw err;
+      throw new Error('transcription-unavailable');
+    }
   }
 
-  return transcribeWithOpenAI(buffer, mimeType, language, forceArabic, options);
+  return transcribeWithOpenAISafe(buffer, mimeType, language, forceArabic, options);
 }
