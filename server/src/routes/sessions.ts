@@ -324,6 +324,7 @@ router.post('/:id/voice-turn', async (req, res) => {
       mimeType = 'audio/webm',
       language = 'ar-EG',
       forceArabic,
+      sessionLang,
       stage = 'history',
       endpoint = 'chat',
       maneuverId,
@@ -333,6 +334,7 @@ router.post('/:id/voice-turn', async (req, res) => {
       mimeType?: string;
       language?: string;
       forceArabic?: boolean;
+      sessionLang?: string;
       stage?: string;
       endpoint?: 'chat' | 'examiner';
       maneuverId?: string;
@@ -351,6 +353,9 @@ router.post('/:id/voice-turn', async (req, res) => {
       result = await processTextTurn({
         ...turnMeta,
         transcript: transcriptBody,
+        language,
+        forceArabic: forceArabic === undefined ? undefined : !!forceArabic,
+        sessionLang,
       });
     } else if (audioBase64 && typeof audioBase64 === 'string') {
       const buffer = Buffer.from(audioBase64, 'base64');
@@ -364,6 +369,7 @@ router.post('/:id/voice-turn', async (req, res) => {
         mimeType,
         language,
         forceArabic: !!forceArabic,
+        sessionLang,
       });
     } else {
       return res.status(400).json({ error: 'No transcript or audio provided' });
@@ -397,10 +403,16 @@ router.post('/:id/voice-turn', async (req, res) => {
       });
     }
     if (message === 'transcription-not-arabic') {
-      return res.status(422).json({ error: 'Could not recognize Arabic speech — try again clearly' });
+      return res.status(422).json({
+        error: 'Could not recognize speech — try again clearly',
+        code: 'transcription-not-arabic',
+      });
     }
     if (message === 'transcription-prompt-leak') {
-      return res.status(422).json({ error: 'Could not understand speech — try again' });
+      return res.status(422).json({
+        error: 'Could not understand speech — try again',
+        code: 'transcription-prompt-leak',
+      });
     }
     if (message === 'local-stt-ffmpeg-missing') {
       return res.status(503).json({

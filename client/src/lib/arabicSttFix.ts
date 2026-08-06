@@ -17,7 +17,7 @@ export function containsWrongScriptForArabic(text: string): boolean {
 }
 
 export function looksLikeSttHallucination(text: string, allowLatinOnly = false): boolean {
-  const normalized = text.trim();
+  const normalized = text.trim().replace(/\s+/g, ' ');
   if (!normalized || normalized.length < 2) return true;
   if (containsWrongScriptForArabic(normalized)) return true;
   if (/شكرا?\s*(للمشاركة|على المشاهدة|لمشاهدتك|للاستماع)/i.test(normalized)) return true;
@@ -28,12 +28,31 @@ export function looksLikeSttHallucination(text: string, allowLatinOnly = false):
   ) {
     return true;
   }
-  if (/nancy|conker|نانسي|كونكر/i.test(normalized)) return true;
+  if (/nancy|conker|نانسي|كونكر|mbc|amara|subtitle|caption/i.test(normalized)) return true;
+
+  // Classic silence / noise phantoms (esp. after switching mic language to EN).
+  if (
+    /^(buch\.?|hello[,.]?\s*world!?|sorry[,.]?\s*could you clarify\??|thank you for (watching|listening)|thanks for watching|subtitle(s)? by|www\.|http)/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(um+|uh+|hmm+|ah+|oh+|mm+|mhm)[.!?]*$/i.test(normalized) ||
+    /^(testing|test|microphone|mic check)[.!?]*$/i.test(normalized)
+  ) {
+    return true;
+  }
+
   // Latin-only is fine for EN / AUTO (code-switching); only reject in forced-Arabic mode.
   if (!allowLatinOnly) {
     const arabic = (normalized.match(/[\u0600-\u06FF]/g) || []).length;
     const latin = (normalized.match(/[a-zA-Z]/g) || []).length;
     if (latin >= 5 && arabic === 0 && normalized.length < 100) return true;
+  } else {
+    // EN mode: reject tiny noise fragments (1–4 letters + optional punct) that aren't real answers.
+    if (/^[A-Za-z]{1,4}[.!?,]*$/i.test(normalized)) return true;
   }
   return false;
 }

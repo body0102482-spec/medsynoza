@@ -639,7 +639,17 @@ router.get('/results', async (_req, res) => {
 router.get('/ai-settings', async (_req, res) => {
   let settings = await prisma.aISettings.findFirst();
   if (!settings) settings = await prisma.aISettings.create({ data: {} });
-  res.json({ settings });
+  const key = settings.openRouterApiKey?.trim() || '';
+  res.json({
+    settings: {
+      ...settings,
+      openRouterApiKey: key
+        ? `${key.slice(0, 10)}…${key.slice(-4)}`
+        : '',
+      hasOpenRouterApiKey: Boolean(key || process.env.OPENROUTER_API_KEY?.trim()),
+      openRouterEnvConfigured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
+    },
+  });
 });
 
 router.put('/ai-settings', async (req, res) => {
@@ -658,7 +668,14 @@ router.put('/ai-settings', async (req, res) => {
     examinerSystemPromptAr,
     examinerSystemPromptEn,
     maxContextMessages,
+    openRouterApiKey,
   } = req.body;
+
+  const keyIncoming = typeof openRouterApiKey === 'string' ? openRouterApiKey.trim() : undefined;
+  // Ignore masked placeholders from the UI (contain ellipsis) so save doesn't overwrite the real key.
+  const keyLooksMasked = !!keyIncoming && (/…|\.{3}|•/.test(keyIncoming) || keyIncoming.includes('***'));
+  const shouldUpdateKey = keyIncoming !== undefined && !keyLooksMasked;
+
   settings = await prisma.aISettings.update({
     where: { id: settings.id },
     data: {
@@ -676,10 +693,22 @@ router.put('/ai-settings', async (req, res) => {
       ...(maxContextMessages !== undefined
         ? { maxContextMessages: Math.max(2, Math.min(100, Number(maxContextMessages) || 12)) }
         : {}),
+      ...(shouldUpdateKey
+        ? { openRouterApiKey: keyIncoming || null }
+        : {}),
     },
   });
   clearAISettingsCache();
-  res.json({ settings });
+
+  const key = settings.openRouterApiKey?.trim() || '';
+  res.json({
+    settings: {
+      ...settings,
+      openRouterApiKey: key ? `${key.slice(0, 10)}…${key.slice(-4)}` : '',
+      hasOpenRouterApiKey: Boolean(key || process.env.OPENROUTER_API_KEY?.trim()),
+      openRouterEnvConfigured: Boolean(process.env.OPENROUTER_API_KEY?.trim()),
+    },
+  });
 });
 
 router.get('/audit-logs', async (_req, res) => {

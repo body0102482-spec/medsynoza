@@ -19,6 +19,7 @@ interface SimulationChatInputProps {
   micError?: string;
   disabled?: boolean;
   isLiveCall?: boolean;
+  compact?: boolean;
 }
 
 const MAX_TEXTAREA_HEIGHT = 160;
@@ -40,6 +41,7 @@ export function SimulationChatInput({
   micError,
   disabled,
   isLiveCall,
+  compact = false,
 }: SimulationChatInputProps) {
   const locked = disabled || sending || isProcessing;
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -52,7 +54,11 @@ export function SimulationChatInput({
   }, [input]);
 
   return (
-    <div className="p-4 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+    <div
+      className={`border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900 ${
+        compact ? 'p-2 sm:p-4' : 'p-4'
+      }`}
+    >
       {chatError && <p className="text-xs text-red-500 mb-2">{chatError}</p>}
       {micError && !isLiveCall && <p className="text-xs text-red-500 mb-2">{micError}</p>}
       {isProcessing && (

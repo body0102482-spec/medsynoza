@@ -93,9 +93,27 @@ export function looksLikeSttHallucination(text: string, allowLatinOnly = false):
     return true;
   }
 
+  // Classic silence / noise phantoms (esp. after switching mic language to EN).
+  if (
+    /^(buch\.?|hello[,.]?\s*world!?|sorry[,.]?\s*could you clarify\??|thank you for (watching|listening)|thanks for watching|subtitle(s)? by|www\.|http)/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(um+|uh+|hmm+|ah+|oh+|mm+|mhm)[.!?]*$/i.test(normalized) ||
+    /^(testing|test|microphone|mic check)[.!?]*$/i.test(normalized)
+  ) {
+    return true;
+  }
+
   const arabic = (normalized.match(/[\u0600-\u06FF]/g) || []).length;
   const latin = (normalized.match(/[a-zA-Z]/g) || []).length;
   if (!allowLatinOnly && latin >= 5 && arabic === 0 && normalized.length < 100) {
+    return true;
+  }
+  if (allowLatinOnly && /^[A-Za-z]{1,4}[.!?,]*$/i.test(normalized)) {
     return true;
   }
 

@@ -9,8 +9,11 @@ function resolveRealtimeModel(): string {
   return 'gpt-realtime-mini';
 }
 
-function resolveRealtimeLanguage(sessionLanguage: string): 'en' | 'ar' {
-  return sessionLanguage === 'EN' ? 'en' : 'ar';
+function resolveRealtimeLanguage(sessionLanguage: string): 'en' | 'ar' | undefined {
+  if (sessionLanguage === 'EN') return 'en';
+  if (sessionLanguage === 'AR') return 'ar';
+  // AUTO: omit language so the realtime transcription model can detect English or Arabic.
+  return undefined;
 }
 
 export function normalizeSdp(sdp: string): string {
@@ -34,7 +37,7 @@ export function buildRealtimeSessionConfig(caseData: Case, sessionLanguage: stri
       input: {
         transcription: {
           model: transcribeModel,
-          language: lang,
+          ...(lang ? { language: lang } : {}),
         },
         turn_detection: {
           type: 'server_vad',

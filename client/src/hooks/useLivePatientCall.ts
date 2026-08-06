@@ -43,11 +43,13 @@ interface UseLiveVoiceCallOptions {
 /** @deprecated Use useLiveVoiceCall — kept for imports */
 export type UseLivePatientCallOptions = UseLiveVoiceCallOptions;
 
-const SILENCE_MS = IS_MOBILE ? 1100 : 650;
-const MIN_SPEECH_MS = IS_MOBILE ? 450 : 380;
-const MAX_RECORDING_MS = 12000;
-const NO_SPEECH_TIMEOUT_MS = IS_MOBILE ? 9000 : 6000;
-const SPEECH_RMS_THRESHOLD = IS_MOBILE ? 0.004 : 0.011;
+/** Pause before auto-submit — long enough for natural breaths (~1s) without cutting speech. */
+const SILENCE_MS = IS_MOBILE ? 2200 : 1800;
+const MIN_SPEECH_MS = IS_MOBILE ? 350 : 380;
+const MAX_RECORDING_MS = IS_MOBILE ? 9000 : 12000;
+const NO_SPEECH_TIMEOUT_MS = IS_MOBILE ? 7000 : 6000;
+/** Phone mics + quiet non-native speech need a lower gate than desktop. */
+const SPEECH_RMS_THRESHOLD = IS_MOBILE ? 0.0018 : 0.011;
 const POST_TURN_LISTEN_DELAY_MS = IS_MOBILE ? 450 : 80;
 const BROWSER_STT_RESTART_DELAY_MS = IS_MOBILE ? 350 : 80;
 /** Client patience for text turns (browser STT path). */
@@ -80,7 +82,7 @@ function classifyTurnError(err: unknown): {
 } {
   const code = err instanceof Error ? err.message : '';
   const response = (err as {
-    response?: { status?: number; data?: { code?: string } };
+    response?: { status?: number; data?: { code?: string; error?: string } };
   })?.response;
   const status = response?.status;
   const serverCode = response?.data?.code;
@@ -96,11 +98,18 @@ function classifyTurnError(err: unknown): {
   if (code === 'turn-timeout' || code === 'transcription-timeout') {
     return { code: 'network', status, fatal: false, softRetry: true };
   }
-  if (status === 422 || status === 400 || code === 'transcription-invalid') {
+  if (
+    status === 422 ||
+    status === 400 ||
+    code === 'transcription-invalid' ||
+    serverCode === 'recording-too-short' ||
+    serverCode === 'transcription-not-arabic' ||
+    code === 'recording-too-short'
+  ) {
     return { code: 'unclear-audio', status, fatal: false, softRetry: true };
   }
   if (status !== undefined || code) {
-    return { code: 'transcription-failed', status, fatal: false, softRetry: false };
+    return { code: 'transcription-failed', status, fatal: false, softRetry: true };
   }
   return { code: 'network', fatal: false, softRetry: true };
 }
@@ -111,7 +120,7 @@ export function useLiveVoiceCall({
   sessionLang = 'AR',
   sendMessage,
   voiceTurn,
-  speakReplies = true,
+  speakReplies = false,
   disabled,
   onError,
 }: UseLiveVoiceCallOptions) {
@@ -144,6 +153,9 @@ export function useLiveVoiceCall({
   const softRetryCountRef = useRef(0);
   const turnSeqRef = useRef(0);
   const processingTurnRef = useRef(false);
+  /** After English browser-STT misses (accent), force recorder+Whisper for this call. */
+  const forceServerSttRef = useRef(false);
+  const enMissCountRef = useRef(0);
 
   sendRef.current = sendMessage;
   voiceTurnRef.current = voiceTurn;
@@ -238,11 +250,8 @@ export function useLiveVoiceCall({
     clearBusyWatchdog();
     busyWatchdogRef.current = setTimeout(() => {
       if (!busyRef.current || !liveRef.current) return;
-      // Avoid duplicate listen if a late response is still settling.
-      if (processingTurnRef.current) {
-        onErrorRef.current?.('network');
-        return;
-      }
+      // Clear a stuck busy state so listening can resume even if a late turn is mid-flight.
+      processingTurnRef.current = false;
       busyRef.current = false;
       setIsBusy(false);
       onErrorRef.current?.('network');
@@ -300,6 +309,8 @@ export function useLiveVoiceCall({
     speakingRef.current = false;
     processingTurnRef.current = false;
     softRetryCountRef.current = 0;
+    forceServerSttRef.current = false;
+    enMissCountRef.current = 0;
     setIsBusy(false);
     setListening(false);
     setSpeaking(false);
@@ -343,13 +354,20 @@ export function useLiveVoiceCall({
       }
       if (classified.softRetry) {
         softRetryCountRef.current += 1;
+        // Unclear audio / accented speech: keep listening silently — never spam
+        // "Could not transcribe audio" during a live call.
+        if (classified.code === 'unclear-audio') {
+          if (softRetryCountRef.current >= MAX_SOFT_RETRIES * 2) {
+            softRetryCountRef.current = 0;
+          }
+          return;
+        }
         if (softRetryCountRef.current >= MAX_SOFT_RETRIES) {
-          onErrorRef.current?.(classified.code === 'unclear-audio' ? 'transcription-failed' : classified.code);
+          onErrorRef.current?.(classified.code);
           softRetryCountRef.current = 0;
-        } else if (classified.code !== 'unclear-audio') {
+        } else {
           onErrorRef.current?.(classified.code);
         }
-        // Keep call alive — never hard-stop on recoverable STT/network failures.
         return;
       }
       onErrorRef.current?.(classified.code);
@@ -366,7 +384,13 @@ export function useLiveVoiceCall({
       try {
         if (turn) {
           const result = await withTimeout(
-            postTextTurn(turn.sessionId, transcript, turn.getRequestMeta()),
+            postTextTurn(
+              turn.sessionId,
+              transcript,
+              turn.getRequestMeta(),
+              sessionLangRef.current,
+              listenLangRef.current,
+            ),
             TEXT_TURN_CLIENT_MS,
             'turn-timeout',
           );
@@ -484,6 +508,15 @@ export function useLiveVoiceCall({
         if (!liveRef.current) return;
 
         if (code === 'no-speech' || code === 'transcription-invalid') {
+          // Accented English often yields browser no-speech — switch to Whisper capture.
+          if (sessionLangRef.current === 'EN') {
+            enMissCountRef.current += 1;
+            if (enMissCountRef.current >= 1) {
+              forceServerSttRef.current = true;
+              scheduleListen(120);
+              return;
+            }
+          }
           scheduleListen(IS_MOBILE ? 400 : 150);
           return;
         }
@@ -518,7 +551,26 @@ export function useLiveVoiceCall({
   }, [disabled, endBusy, handleTurnFailure, processTextTurn, scheduleListen, setListening, startBusy, stopCall]);
 
   const listenOnce = useCallback(async () => {
-    if (shouldUseBrowserStt()) {
+    // Prefer browser STT (works for Arabic on Android). Force server Whisper when:
+    // - browser STT unavailable, or
+    // - English browser STT already missed once (accent / en-US mismatch).
+    const useBrowser =
+      shouldUseBrowserStt() &&
+      !forceServerSttRef.current &&
+      sessionLangRef.current !== 'EN';
+
+    // For English: try browser once, then Whisper. First EN attempt can try browser
+    // if we haven't forced server yet — but on Android Chrome, en-US browser STT is
+    // weak for non-native accents, so default EN live calls straight to Whisper.
+    const preferWhisperForEnglish = sessionLangRef.current === 'EN';
+
+    if (!preferWhisperForEnglish && useBrowser) {
+      await listenOnceWithBrowser();
+      return;
+    }
+
+    if (preferWhisperForEnglish && shouldUseBrowserStt() && !forceServerSttRef.current && !IS_MOBILE) {
+      // Desktop EN: browser STT is usually fine.
       await listenOnceWithBrowser();
       return;
     }
@@ -576,11 +628,20 @@ export function useLiveVoiceCall({
 
         if (
           elapsed < MIN_SPEECH_MS ||
-          blob.size < minLiveCallBlobBytes() ||
-          speechStartedAtRef.current === 0
+          blob.size < minLiveCallBlobBytes()
         ) {
           scheduleListen(150);
           return;
+        }
+
+        // Android Chrome VAD often misses quiet / accented speech (RMS never crosses
+        // the gate). Still send the clip to Whisper when we have enough audio bytes.
+        if (speechStartedAtRef.current === 0) {
+          const likelyHasAudio = blob.size >= minLiveCallBlobBytes() * (IS_MOBILE ? 1.2 : 2);
+          if (!likelyHasAudio || elapsed < (IS_MOBILE ? 700 : 900)) {
+            scheduleListen(150);
+            return;
+          }
         }
 
         startBusy();
@@ -661,7 +722,13 @@ export function useLiveVoiceCall({
         }
       }, MAX_RECORDING_MS);
 
-      recorder.start(recorderTimesliceMs());
+      // Android MediaRecorder + timeslice often produces corrupt mp4/webm that
+      // Whisper rejects ("Could not transcribe"). Prefer a single contiguous blob.
+      if (IS_MOBILE) {
+        recorder.start();
+      } else {
+        recorder.start(recorderTimesliceMs());
+      }
       vadFrameRef.current = requestAnimationFrame(monitor);
     } catch (err) {
       setListening(false);
@@ -707,6 +774,8 @@ export function useLiveVoiceCall({
     }
     void unlockMobileAudio();
     softRetryCountRef.current = 0;
+    forceServerSttRef.current = sessionLangRef.current === 'EN' && IS_MOBILE;
+    enMissCountRef.current = 0;
     liveRef.current = true;
     setIsLiveCall(true);
     void listenOnce();

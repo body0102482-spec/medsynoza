@@ -10,7 +10,8 @@ function getOpenAIClient(): OpenAI {
   return new OpenAI({ apiKey });
 }
 
-const ENGLISH_WHISPER_PROMPT = 'OSCE medical interview. Hello doctor.';
+const ENGLISH_WHISPER_PROMPT =
+  'OSCE medical interview. Non-native English speaker. Hello doctor. What is your name? How old are you? What brings you here today? Where is the pain?';
 const ARABIC_WHISPER_PROMPT = 'دكتور مريض عامية مصرية OSCE';
 
 const PROMPT_HALLUCINATION_PHRASES = [
@@ -35,25 +36,33 @@ export function looksLikePromptHallucination(text: string): boolean {
 }
 
 /** When STT returns multiple questions, keep the last one the student actually asked. */
-export function extractPrimaryUtterance(text: string): string {
+export function extractPrimaryUtterance(text: string, allowLatinOnly = false): string {
   const trimmed = text.trim();
-  if (!trimmed || looksLikePromptHallucination(trimmed) || looksLikeSttHallucination(trimmed)) {
+  if (
+    !trimmed ||
+    looksLikePromptHallucination(trimmed) ||
+    looksLikeSttHallucination(trimmed, allowLatinOnly)
+  ) {
     throw new Error('transcription-prompt-leak');
   }
 
   const segments = trimmed
     .split(/[؟?]/)
     .map((s) => s.trim())
-    .filter((s) => s.length > 1 && !looksLikeSttHallucination(s));
+    .filter((s) => s.length > 1 && !looksLikeSttHallucination(s, allowLatinOnly));
 
   if (!segments.length) {
+    // Keep the full utterance for accented / imperfect English rather than failing the turn.
+    if (allowLatinOnly && /[a-zA-Z]/.test(trimmed) && trimmed.length >= 2) {
+      return trimmed;
+    }
     throw new Error('transcription-prompt-leak');
   }
 
   if (segments.length === 1) return segments[0];
 
   const last = segments[segments.length - 1];
-  return last.endsWith('؟') || last.endsWith('?') ? last : `${last}؟`;
+  return last.endsWith('؟') || last.endsWith('?') ? last : `${last}?`;
 }
 
 export function resolveWhisperLanguage(
@@ -128,16 +137,37 @@ function finalizeTranscript(
   expectArabic: boolean,
   options?: { fast?: boolean },
 ): string {
-  let normalized = fixArabicSpeechTranscript(text, expectArabic);
-  if (looksLikeSttHallucination(normalized, !expectArabic) || containsWrongScriptForArabic(normalized)) {
+  const raw = text.trim().replace(/\s+/g, ' ');
+  let normalized = fixArabicSpeechTranscript(raw, expectArabic);
+
+  if (containsWrongScriptForArabic(normalized)) {
+    throw new Error('transcription-prompt-leak');
+  }
+
+  // English / AUTO: keep accented imperfect speech — never drop a usable Latin utterance.
+  if (!expectArabic) {
+    if (options?.fast) {
+      normalized = prioritizeWellbeingTranscript(normalized);
+    }
+    try {
+      return extractPrimaryUtterance(normalized, true);
+    } catch {
+      if (/[a-zA-Z\u0600-\u06FF]/.test(normalized) && normalized.length >= 2) {
+        return normalized;
+      }
+      throw new Error('transcription-prompt-leak');
+    }
+  }
+
+  if (looksLikeSttHallucination(normalized, false)) {
     throw new Error('transcription-prompt-leak');
   }
   if (options?.fast) {
     normalized = prioritizeWellbeingTranscript(normalized);
   }
-  normalized = extractPrimaryUtterance(normalized);
+  normalized = extractPrimaryUtterance(normalized, false);
 
-  if (transcriptionNeedsArabicFix(normalized, expectArabic)) {
+  if (transcriptionNeedsArabicFix(normalized, true)) {
     throw new Error('transcription-not-arabic');
   }
 
@@ -163,21 +193,74 @@ async function transcribeWithOpenAI(
   const primaryModel = resolvePrimaryModel();
   const fallbackModel = 'whisper-1';
 
-  let text = await runWhisper(client, buffer, mimeType, whisperLang, primaryModel, false);
+  async function attempt(
+    lang: 'ar' | 'en' | 'auto',
+    model: string,
+    usePrompt: boolean,
+  ): Promise<string> {
+    try {
+      return await runWhisper(client, buffer, mimeType, lang, model, usePrompt);
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      console.warn('[stt] whisper failed model=%s lang=%s status=%s', model, lang, status ?? 'n/a');
+      throw err;
+    }
+  }
+
+  let text = '';
+  try {
+    text = await attempt(whisperLang, primaryModel, false);
+  } catch {
+    // gpt-4o-transcribe often fails on Android MediaRecorder mp4/webm fragments — fall back.
+    text = await attempt(whisperLang === 'auto' ? 'auto' : whisperLang, fallbackModel, true);
+  }
+
+  // Non-native / accented English: retry with auto-detect / whisper-1 when EN looks weak.
+  if (whisperLang === 'en') {
+    const arabicChars = (text.match(/[\u0600-\u06FF]/g) || []).length;
+    const latinChars = (text.match(/[a-zA-Z]/g) || []).length;
+    const weakEnglish =
+      !text ||
+      text.length < 2 ||
+      (arabicChars >= 3 && latinChars === 0) ||
+      looksLikePromptHallucination(text);
+    if (weakEnglish) {
+      for (const [lang, model, prompt] of [
+        ['auto', primaryModel, false],
+        ['en', fallbackModel, true],
+        ['auto', fallbackModel, true],
+      ] as const) {
+        try {
+          const retry = await attempt(lang, model, prompt);
+          const retryLatin = (retry.match(/[a-zA-Z]/g) || []).length;
+          if (retry && retry.length >= 2 && retryLatin >= latinChars) {
+            text = retry;
+            if (retryLatin > 0) break;
+          }
+        } catch {
+          // try next
+        }
+      }
+    }
+  }
 
   if (looksLikePromptHallucination(text)) {
-    if (options?.fast) {
+    if (options?.fast && expectArabic) {
       throw new Error('transcription-prompt-leak');
     }
-    text = await runWhisper(client, buffer, mimeType, whisperLang, primaryModel, false);
-    if (looksLikePromptHallucination(text)) {
+    try {
+      text = await attempt(whisperLang, fallbackModel, true);
+    } catch {
+      // keep previous
+    }
+    if (looksLikePromptHallucination(text) && expectArabic) {
       throw new Error('transcription-prompt-leak');
     }
   }
 
   if (needsWhisperArabicFallback(text, whisperLang)) {
     try {
-      text = await runWhisper(client, buffer, mimeType, whisperLang, fallbackModel, true);
+      text = await attempt(whisperLang, fallbackModel, true);
     } catch {
       // Keep primary result if whisper retry fails.
     }
@@ -186,20 +269,18 @@ async function transcribeWithOpenAI(
   if (transcriptionNeedsArabicFix(text, expectArabic)) {
     if (primaryModel !== fallbackModel) {
       try {
-        const whisperText = await runWhisper(
-          client,
-          buffer,
-          mimeType,
-          whisperLang,
-          fallbackModel,
-          true,
-        );
+        const whisperText = await attempt(whisperLang, fallbackModel, true);
         return finalizeTranscript(whisperText, expectArabic, options);
       } catch {
-        // Fall through to error below.
+        // Fall through.
       }
     }
     throw new Error('transcription-not-arabic');
+  }
+
+  // Empty English result → treat as soft unclear audio, not a hard auth/API failure.
+  if (!text.trim()) {
+    throw new Error('transcription-prompt-leak');
   }
 
   return finalizeTranscript(text, expectArabic, options);
@@ -215,14 +296,48 @@ async function transcribeWithOpenAISafe(
   try {
     return await transcribeWithOpenAI(buffer, mimeType, language, forceArabic, options);
   } catch (err) {
-    const openAiError = err as { status?: number; code?: string };
+    const message = err instanceof Error ? err.message : '';
+    if (
+      message === 'transcription-unavailable' ||
+      message === 'transcription-auth-failed' ||
+      message === 'transcription-quota-exceeded' ||
+      message === 'transcription-prompt-leak' ||
+      message === 'transcription-not-arabic' ||
+      message === 'recording-too-short'
+    ) {
+      throw err;
+    }
+
+    const openAiError = err as { status?: number; code?: string; message?: string };
     if (openAiError.status === 401 || openAiError.code === 'invalid_api_key') {
       throw new Error('transcription-auth-failed');
     }
     if (openAiError.status === 429) {
       throw new Error('transcription-quota-exceeded');
     }
-    throw err;
+
+    // Last-chance: whisper-1 with auto, ignore language forcing tip.
+    try {
+      console.warn(
+        '[stt] primary OpenAI path failed (%s) — last-chance whisper-1/auto',
+        message || openAiError.code || openAiError.status || 'unknown',
+      );
+      const client = getOpenAIClient();
+      const raw = await runWhisper(client, buffer, mimeType, 'auto', 'whisper-1', true);
+      const expectArabic = resolveWhisperLanguage(language, forceArabic) === 'ar';
+      return finalizeTranscript(raw, expectArabic, options);
+    } catch (fallbackErr) {
+      const fb = fallbackErr instanceof Error ? fallbackErr.message : '';
+      if (
+        fb === 'transcription-prompt-leak' ||
+        fb === 'transcription-not-arabic' ||
+        fb === 'recording-too-short'
+      ) {
+        throw fallbackErr;
+      }
+      console.error('[stt] OpenAI transcription failed:', err);
+      throw new Error('transcription-prompt-leak');
+    }
   }
 }
 

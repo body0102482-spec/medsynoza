@@ -782,6 +782,24 @@ export default {
       adminAiKbCategoryRequired: "Select a category",
       adminAiKbCaseRequired: "Select a case",
       adminQbankNav: "Q-Bank",
+      adminSettingsNav: "Settings",
+      adminSettingsTitle: "AI & API Settings",
+      adminSettingsDesc:
+        "Configure the AI provider and OpenRouter API key used for patient and examiner replies.",
+      adminAiProvider: "AI provider",
+      adminAiProviderHint:
+        "OpenRouter uses an OpenAI-compatible API. Speech transcription still uses OpenAI Whisper when configured.",
+      adminOpenRouterKey: "OpenRouter API key",
+      adminOpenRouterKeyHint:
+        "Paste your sk-or-v1-… key from openrouter.ai. Stored in the database (admin-only).",
+      adminOpenRouterKeyPlaceholder: "sk-or-v1-…",
+      adminOpenRouterKeyLeaveBlank: "Leave blank to keep the currently saved key.",
+      adminOpenRouterKeyStored: "Saved key",
+      adminOpenRouterEnvActive: "env override active",
+      adminOpenRouterModelHint:
+        "For OpenRouter, use model IDs like openai/gpt-4o-mini or anthropic/claude-3.5-sonnet.",
+      adminSettingsLoadError: "Failed to load settings",
+      adminSettingsSaveError: "Failed to save settings",
       adminApiUsage: "API Usage",
       adminPricing: "Pricing",
       adminPricingDesc:
@@ -1133,6 +1151,8 @@ export default {
       mustExaminerPanel: "Egyptian Senior Examiner Panel",
       oralCheckInProgress: "Oral Check In Progress",
       patientSlideGallery: "Patient Slide Gallery Clue",
+      showClinicalImages: "Show images",
+      hideClinicalImages: "Hide images",
       imageOf: "Image",
       noExamImages:
         "Clinical image placeholder — describe findings from case data",
@@ -1994,6 +2014,24 @@ export default {
       adminAiKbCategoryRequired: "اختر قسماً",
       adminAiKbCaseRequired: "اختر حالة",
       adminQbankNav: "بنك الأسئلة",
+      adminSettingsNav: "الإعدادات",
+      adminSettingsTitle: "إعدادات الذكاء الاصطناعي وواجهة البرمجة",
+      adminSettingsDesc:
+        "اضبط مزود الذكاء الاصطناعي ومفتاح OpenRouter لردود المريض والممتحن.",
+      adminAiProvider: "مزود الذكاء الاصطناعي",
+      adminAiProviderHint:
+        "OpenRouter متوافق مع OpenAI. تحويل الصوت لنص يظل عبر OpenAI Whisper إن كان مضبوطاً.",
+      adminOpenRouterKey: "مفتاح OpenRouter",
+      adminOpenRouterKeyHint:
+        "الصق مفتاح sk-or-v1-… من openrouter.ai. يُحفظ في قاعدة البيانات (للأدمن فقط).",
+      adminOpenRouterKeyPlaceholder: "sk-or-v1-…",
+      adminOpenRouterKeyLeaveBlank: "اتركه فارغاً للإبقاء على المفتاح المحفوظ.",
+      adminOpenRouterKeyStored: "المفتاح المحفوظ",
+      adminOpenRouterEnvActive: "متغير البيئة مفعّل",
+      adminOpenRouterModelHint:
+        "مع OpenRouter استخدم معرفات مثل openai/gpt-4o-mini أو anthropic/claude-3.5-sonnet.",
+      adminSettingsLoadError: "فشل تحميل الإعدادات",
+      adminSettingsSaveError: "فشل حفظ الإعدادات",
       adminApiUsage: "استخدام الـ API",
       adminPricing: "الأسعار",
       adminPricingDesc: "تعديل أسعار باقات الاشتراك والحصص والمدد.",
@@ -2338,6 +2376,8 @@ export default {
       mustExaminerPanel: "لجنة Examiners — الجامعات المصرية",
       oralCheckInProgress: "الفحص الشفوي جاري",
       patientSlideGallery: "معرض صور المريض",
+      showClinicalImages: "عرض الصور",
+      hideClinicalImages: "إخفاء الصور",
       imageOf: "صورة",
       noExamImages: "صورة سريرية — صفّ ملاحظاتك من بيانات الحالة",
       clinicalStation: "محطة سريرية تفاعلية",

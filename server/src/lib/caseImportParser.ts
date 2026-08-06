@@ -134,11 +134,18 @@ function stripLeadingImports(source: string): string {
 }
 
 function stripExportWrapper(source: string): string {
-  return source
-    .replace(/^export\s+const\s+\w+\s*(?::\s*[\w.]+)?\s*=\s*/m, '')
-    .replace(/^export\s+default\s+/m, '')
-    .replace(/;\s*$/, '')
-    .trim();
+  let rest = source.trim();
+  // Strip `export const/let/var name: ComplexType =` including generics, unions, imports.
+  rest = rest.replace(
+    /^(?:export\s+(?:default\s+)?)?(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*(?::\s*[^=;{]+)?\s*=\s*(?:as\s+const\s+)?/m,
+    '',
+  );
+  rest = rest.replace(/^export\s+default\s+/m, '');
+  // Trailing TypeScript assertions / satisfies after the object.
+  rest = rest.replace(/\s+satisfies\s+[\w.<>,\s|&[\]()'"`]+?\s*;?\s*$/m, '');
+  rest = rest.replace(/\s+as\s+(?:const|[\w.<>,\s|&[\]()]+)\s*;?\s*$/m, '');
+  rest = rest.replace(/;\s*$/, '');
+  return rest.trim();
 }
 
 function findCaseObjectStart(source: string): number {
@@ -146,6 +153,9 @@ function findCaseObjectStart(source: string): number {
   if (assignMatch && assignMatch.index != null) {
     return source.indexOf('{', assignMatch.index);
   }
+  // Bare object literal, or leftover after stripping typed export.
+  const bare = source.match(/^\s*\{/);
+  if (bare && bare.index != null) return source.indexOf('{', bare.index);
   return source.indexOf('{');
 }
 

@@ -5,7 +5,7 @@ import {
   Users, FileText, BarChart3, ClipboardList,
   TrendingUp, Activity, CheckCircle2, BookOpen, FolderTree, Plus, Trash2,
   Globe, GraduationCap, Pencil, X, Eye, ExternalLink, RefreshCw, Library,
-  DollarSign, Cpu, Sparkles,
+  DollarSign, Cpu, Sparkles, Settings,
 } from 'lucide-react';
 import api, { pingServer } from '../lib/api';
 import { DashboardLayout } from '../components/DashboardLayout';
@@ -16,9 +16,10 @@ import { AdminApiUsageTab } from '../components/admin/AdminApiUsageTab';
 import { AdminPricingTab } from '../components/admin/AdminPricingTab';
 import { AdminStudentProfile } from '../components/admin/AdminStudentProfile';
 import { AdminKnowledgeAiTab } from '../components/admin/AdminKnowledgeAiTab';
+import { AdminSettingsTab } from '../components/admin/AdminSettingsTab';
 import type { SiteSettings } from '../components/SiteFooter';
 
-type Tab = 'overview' | 'users' | 'cases' | 'results' | 'knowledge' | 'knowledgeAi' | 'site' | 'qbank' | 'apiUsage' | 'pricing';
+type Tab = 'overview' | 'users' | 'cases' | 'results' | 'knowledge' | 'knowledgeAi' | 'site' | 'qbank' | 'apiUsage' | 'pricing' | 'settings';
 
 interface CategoryRow {
   id: string;
@@ -322,6 +323,7 @@ export default function AdminDashboard() {
 
   const navItems = [
     { id: 'overview', label: t('statistics'), icon: BarChart3 },
+    { id: 'settings', label: t('adminSettingsNav'), icon: Settings },
     { id: 'apiUsage', label: t('adminApiUsage'), icon: Cpu },
     { id: 'pricing', label: t('adminPricing'), icon: DollarSign },
     { id: 'users', label: t('users'), icon: Users },
@@ -633,6 +635,7 @@ export default function AdminDashboard() {
       )}
 
       {tab === 'apiUsage' && <AdminApiUsageTab />}
+      {tab === 'settings' && <AdminSettingsTab />}
       {tab === 'pricing' && <AdminPricingTab />}
 
       {tab === 'users' && (

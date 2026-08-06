@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
-"""Upload synoza-deploy.tar.gz and restart production app."""
+"""Upload synoza-deploy.tar.gz and restart production app. Code-only — never touch DB."""
+from __future__ import annotations
+
 import sys
-import paramiko
+import time
 from pathlib import Path
+
+import paramiko
 
 ROOT = Path(__file__).resolve().parents[1]
 TAR_PATH = ROOT / "deploy" / "synoza-deploy.tar.gz"
@@ -11,21 +15,25 @@ APP_DIR = "/home/adminanmkavps/synoza.anmka.com"
 HOST = "77.237.232.181"
 PORT = 2222
 USER = "root"
-PASSWORD = 'shtlIf9LAyf1yk3bKF4J'
+PASSWORD = "77z/8(G7&ls)"
 
 
-def run(client: paramiko.SSHClient, cmd: str, timeout: int = 600) -> str:
-    print(">>>", cmd)
+def log(msg: str) -> None:
+    print(msg, flush=True)
+
+
+def run(client: paramiko.SSHClient, cmd: str, timeout: int = 900) -> str:
+    log(f">>> {cmd[:180].replace(chr(10), ' ')}...")
     _, stdout, stderr = client.exec_command(cmd, timeout=timeout)
     out = stdout.read().decode("utf-8", "replace")
     err = stderr.read().decode("utf-8", "replace")
     code = stdout.channel.recv_exit_status()
     if out.strip():
-        print(out[-6000:])
+        log(out[-8000:])
     if err.strip():
-        print("ERR:", err[-3000:])
+        log("ERR: " + err[-4000:])
     if code != 0:
-        raise RuntimeError(f"Command failed ({code}): {cmd}")
+        raise RuntimeError(f"Command failed ({code}): {cmd[:120]}")
     return out
 
 
@@ -33,15 +41,39 @@ def main() -> None:
     if not TAR_PATH.exists():
         raise SystemExit(f"Missing package: {TAR_PATH}. Run: npm run deploy:package")
 
+    size = TAR_PATH.stat().st_size
+    log(f"Package: {TAR_PATH} ({size / 1e6:.1f} MB)")
+
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=30)
+    log(f"Connecting {HOST}:{PORT} ...")
+    client.connect(HOST, port=PORT, username=USER, password=PASSWORD, timeout=30, banner_timeout=60)
+    log("SSH connected.")
 
-    sftp = client.open_sftp()
+    transport = client.get_transport()
+    if transport:
+        transport.set_keepalive(15)
+
     remote_tar = "/tmp/synoza-deploy.tar.gz"
-    print(f"Uploading {TAR_PATH} -> {remote_tar}")
-    sftp.put(str(TAR_PATH), remote_tar)
+    log(f"Uploading -> {remote_tar}")
+    sftp = client.open_sftp()
+    last = {"t": time.time(), "sent": 0}
+
+    def progress(sent: int, total: int) -> None:
+        now = time.time()
+        if now - last["t"] < 2 and sent < total:
+            return
+        elapsed = max(now - last["t"], 0.001)
+        delta = sent - last["sent"]
+        speed = delta / elapsed / 1e6
+        pct = (100.0 * sent / total) if total else 0
+        log(f"  upload {pct:5.1f}%  {sent/1e6:.1f}/{total/1e6:.1f} MB  {speed:.2f} MB/s")
+        last["t"] = now
+        last["sent"] = sent
+
+    sftp.put(str(TAR_PATH), remote_tar, callback=progress)
     sftp.close()
+    log("Upload complete. Extracting + restarting (no DB changes)...")
 
     run(
         client,
@@ -82,21 +114,24 @@ npx prisma generate
 # Code-only deploy: never touch the database.
 # Do NOT run: prisma db push / migrate / seed / --accept-data-loss.
 cd "$APP"
-# Ensure packaged seed media also available under persistent root
 if [ -d "$APP/client/public/exam/cases" ]; then
   cp -an "$APP/client/public/exam/cases/." /home/adminanmkavps/synoza-media/exam/cases/ 2>/dev/null || true
 fi
 pm2 delete synoza 2>/dev/null || true
 pm2 start ecosystem.config.cjs
 pm2 save
-sleep 2
-curl -s http://127.0.0.1:5099/api/ping || true
+sleep 3
+echo PING=$(curl -s -m 10 http://127.0.0.1:5099/api/ping || echo FAIL)
+echo HEALTH=$(curl -s -m 10 http://127.0.0.1:5099/api/health || echo FAIL)
 pm2 list | grep synoza || true
+# Confirm no migrate/seed ran in this shell history of this script
+echo DEPLOY_MODE=code-only
 """,
+        timeout=900,
     )
 
     client.close()
-    print("Deploy completed.")
+    log("Deploy completed.")
 
 
 if __name__ == "__main__":

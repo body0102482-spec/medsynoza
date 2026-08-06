@@ -96,24 +96,20 @@ section('2. AI Latency budgets');
   assert(ai.includes('callOpenAIStream'), 'streaming completion path exists');
   assert(ai.includes('stream: true'), 'live turns request streaming');
   assert(ai.includes('formatPatientBehaviorPrompt') || ai.includes('STATION PATIENT BEHAVIOR') || ai.includes('patientBehavior'), 'patient behavior wired into AI prompts');
-  // Global Synoza patient behavior rules seeded into every prompt (chat + voice)
-  assert(ai.includes('SYNOZA_PATIENT_CORE_RULES'), 'global Synoza patient rules constant defined');
-  const coreMatches = ai.match(/\$\{SYNOZA_PATIENT_CORE_RULES\}/g) || [];
-  assert(coreMatches.length >= 2, 'core rules injected into both chat and voice prompts', String(coreMatches.length));
-  assert(ai.includes('SYNOZA PATIENT BEHAVIOR RULES'), 'core rules block header present');
+  // Knowledge-first patient policy seeded into every prompt (chat + voice)
+  assert(ai.includes('PATIENT_KNOWLEDGE_FIRST_RULES'), 'knowledge-first patient rules constant defined');
+  const coreMatches = ai.match(/\$\{PATIENT_KNOWLEDGE_FIRST_RULES\}/g) || [];
+  assert(coreMatches.length >= 2, 'knowledge-first rules injected into both chat and voice prompts', String(coreMatches.length));
+  assert(ai.includes('PATIENT RESPONSE POLICY (knowledge-first)'), 'knowledge-first rules block header present');
   for (const rule of [
-    'Stay fully in character',
-    'Never invent medical facts',
+    'Answer ONLY from CASE BACKGROUND',
+    'ADMIN AI KNOWLEDGE',
+    'do NOT guess',
+    "I'm not feeling well right now, doctor",
     'Respect biological reality',
-    'Correct false assumptions',
-    'Protect your dignity',
-    'Reveal no hidden knowledge',
-    "Admit when you don't know",
-    "Don't volunteer extra",
-    'Keep most answers to 1–3 sentences',
-    'gently steer back to the consultation',
+    'Never invent symptoms',
   ]) {
-    assert(ai.includes(rule), `core rule present: ${rule}`);
+    assert(ai.includes(rule), `knowledge-first rule present: ${rule}`);
   }
 }
 
@@ -146,6 +142,15 @@ assert(
   'EN mode keeps English phrase',
 );
 assert(!looksLikeSttHallucination('Hello doctor how are you', true), 'Latin allowed when code-switch');
+assert(
+  extractPrimaryUtterance('Hello doctor. What is your name?', true).toLowerCase().includes('name'),
+  'English utterance survives extractPrimaryUtterance',
+);
+assert(
+  extractPrimaryUtterance('wat is your neym doctor', true).toLowerCase().includes('neym') ||
+    extractPrimaryUtterance('wat is your neym doctor', true).toLowerCase().includes('name'),
+  'accented imperfect English accepted',
+);
 fileContains(
   'client/src/components/SpeechLanguageToggle.tsx',
   ['AUTO', 'AR', 'EN'],

@@ -10,6 +10,8 @@ import {
   Lightbulb,
   UserCircle,
   ChevronRight,
+  ChevronDown,
+  ChevronUp,
   ArrowLeft,
   Stethoscope,
   Eye,
@@ -248,17 +250,21 @@ export default function SimulationPage() {
           ? 'examiner'
           : null;
 
-  const examinerSpeechLang =
+  // Always honor the speech-language toggle for mic + live call STT.
+  // Previously patient context hardcoded ar-EG/AR, so EN speech was transcribed as Arabic letters.
+  const listenLang =
     lang === 'EN'
       ? 'en-US'
       : lang === 'AR'
         ? 'ar-EG'
-        : // AUTO: follow context — patient Arabic, examiner prefer English with mixed STT acceptance
-          activeStage === 'examination' || (activeStage === 'history' && showExaminerPanel)
+        : // AUTO: patient stages prefer Arabic; examiner / examination prefer English
+          voiceCallContext === 'examiner' ||
+            activeStage === 'examination' ||
+            activeStage === 'diagnosis' ||
+            (activeStage === 'history' && showExaminerPanel)
             ? 'en-US'
             : 'ar-EG';
-  const listenLang = voiceCallContext === 'patient' ? 'ar-EG' : examinerSpeechLang;
-  const speakLang = voiceCallContext === 'patient' ? 'ar-EG' : examinerSpeechLang;
+  const speakLang = listenLang;
 
   const sendMessage = useCallback(
     async (overrideText?: string): Promise<{ success: boolean; reply?: string }> => {
@@ -367,9 +373,9 @@ export default function SimulationPage() {
     };
   }, [activeStage, activeManeuver, showExaminerPanel, enableHistoryExaminer]);
 
-  const micSpeechLang = voiceCallContext === 'patient' ? 'ar-EG' : listenLang;
-  // Pass AUTO through so STT validation allows code-switching; patient role stays Arabic-forced.
-  const micSessionLang = voiceCallContext === 'patient' ? 'AR' : lang;
+  // Mic + live-call STT must follow the same language the student selected (AUTO / AR / EN).
+  const micSpeechLang = listenLang;
+  const micSessionLang = lang;
 
   const { isListening, isProcessing, isSupported: isMicSupported, toggleListening, stopListening, forceReleaseMic } = useSpeechInput({
     lang: micSpeechLang,
@@ -444,7 +450,8 @@ export default function SimulationPage() {
     speakLang,
     sessionLang: micSessionLang,
     sendMessage,
-    speakReplies: true,
+    // Student can speak / live-call; AI replies are text-only (no TTS).
+    speakReplies: false,
     voiceTurn: sessionId
       ? {
           sessionId,
@@ -461,7 +468,8 @@ export default function SimulationPage() {
     speakLang,
     sessionLang: micSessionLang,
     sendMessage,
-    speakReplies: true,
+    // Student can speak / live-call; AI replies are text-only (no TTS).
+    speakReplies: false,
     voiceTurn: sessionId
       ? {
           sessionId,
@@ -485,9 +493,14 @@ export default function SimulationPage() {
   }, [voiceCallContext, patientLiveCall.stopCall, examinerLiveCall.stopCall, stopListening]);
 
   useEffect(() => {
+    // Language toggle must never leave STT running or auto-accept phantom results.
+    acceptMicInputRef.current = false;
+    setInput('');
+    setMicError('');
     if (patientLiveCall.isLiveCall) patientLiveCall.stopCall();
     if (examinerLiveCall.isLiveCall) examinerLiveCall.stopCall();
     stopListening();
+    forceReleaseMic();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listenLang]);
 
@@ -1256,8 +1269,8 @@ function ExaminationStepsBar({
   caseManeuvers: readonly ExamManeuverMeta[];
 }) {
   return (
-    <div className="md:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-3 shrink-0">
-      <div className="flex gap-2 overflow-x-auto pb-1">
+    <div className="md:hidden bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-3 py-2 shrink-0">
+      <div className="flex gap-2 overflow-x-auto">
         {caseManeuvers.map((m) => {
           const active = activeManeuver === m.id;
           const done = completedManeuvers.includes(m.id);
@@ -1280,7 +1293,6 @@ function ExaminationStepsBar({
           );
         })}
       </div>
-      <p className="text-[10px] text-slate-500 mt-2">{t("physicalExamDesc")}</p>
     </div>
   );
 }
@@ -1356,6 +1368,8 @@ function ExaminationView({
   endLiveCallLabel?: string;
   sessionLocked?: boolean;
 }) {
+  const [galleryOpen, setGalleryOpen] = useState(false);
+
   if (!activeManeuver || !activeManeuverMeta) {
     const nextId = getNextManeuver(completedManeuvers, caseManeuvers);
     const nextMeta = caseManeuvers.find((m) => m.id === nextId);
@@ -1393,8 +1407,8 @@ function ExaminationView({
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden min-h-0">
-      {/* Station header */}
-      <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-5 py-3 flex items-center justify-between">
+      {/* Station header — desktop only (saves vertical space on mobile) */}
+      <div className="hidden md:flex shrink-0 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 px-5 py-3 items-center justify-between">
         <div>
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
             {activeManeuverMeta.nameEn} · {t("observationStation")}
@@ -1411,8 +1425,9 @@ function ExaminationView({
       </div>
 
       <div className="flex-1 min-h-0 flex flex-col lg:flex-row gap-0 overflow-hidden">
+        {/* Desktop clinical panel */}
         {activeManeuver && (
-          <div className="shrink-0 lg:w-[42%] lg:max-w-md lg:border-r border-slate-200 dark:border-slate-800 overflow-y-auto max-h-[40vh] lg:max-h-none p-4">
+          <div className="hidden lg:block shrink-0 lg:w-[42%] lg:max-w-md lg:border-r border-slate-200 dark:border-slate-800 overflow-y-auto p-4">
             <ClinicalStationPanel
               maneuverId={activeManeuver}
               examImages={examImages}
@@ -1422,54 +1437,104 @@ function ExaminationView({
           </div>
         )}
 
-        {/* Clinical examiner chat — full remaining height */}
-        <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-slate-900 lg:rounded-none border-t lg:border-t-0 border-slate-200 dark:border-slate-800">
+        {/* Clinical examiner chat — takes all remaining mobile height */}
+        <div className="flex-1 min-h-0 flex flex-col bg-white dark:bg-slate-900 border-t lg:border-t-0 border-slate-200 dark:border-slate-800">
+          {/* Mobile collapsible gallery — collapsed by default so chat stays visible */}
+          {activeManeuver && (
+            <div className="lg:hidden shrink-0 border-b border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/80">
+              <button
+                type="button"
+                onClick={() => setGalleryOpen((open) => !open)}
+                className="w-full px-3 py-2 flex items-center justify-between gap-2 text-left"
+              >
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wide">
+                  {t("patientSlideGallery")}
+                </span>
+                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary shrink-0">
+                  {galleryOpen ? t("hideClinicalImages") : t("showClinicalImages")}
+                  {galleryOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </span>
+              </button>
+              {galleryOpen && (
+                <div className="max-h-[22vh] overflow-y-auto overscroll-y-contain px-3 pb-3">
+                  <ClinicalStationPanel
+                    maneuverId={activeManeuver}
+                    examImages={examImages}
+                    isAr={isAr}
+                    t={t}
+                    compact
+                  />
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
-            <div className="px-4 py-3 flex items-center justify-between gap-3">
-              <div className="flex items-center gap-2 min-w-0">
-                <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
-                  <Stethoscope size={16} className="text-amber-700" />
-                </div>
-                <div className="min-w-0">
-                  <p className="text-[10px] font-bold text-slate-400 uppercase">
-                    {t("clinicalExaminer")}
-                  </p>
-                  <p className="text-xs text-slate-600 truncate">
-                    {activeManeuverMeta.nameEn}
-                  </p>
-                </div>
+            {/* Row 1: examiner identity + status */}
+            <div className="px-3 pt-2 pb-1 flex items-start gap-2 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <Stethoscope size={16} className="text-amber-700" />
               </div>
-              <div className="flex items-center gap-2 shrink-0">
-                <SpeechLanguageToggle
-                  value={lang}
-                  onChange={setLang}
-                  disabled={sending || isLiveCall}
-                  labels={{
-                    auto: t('speechLangAuto'),
-                    ar: t('speechLangAr'),
-                    en: t('speechLangEn'),
-                  }}
-                />
-                <LiveCallButton
-                  isLiveCall={isLiveCall}
-                  isLiveCallBusy={isLiveCallBusy}
-                  isLiveCallSupported={isLiveCallSupported}
-                  onToggleLiveCall={onToggleLiveCall}
-                  liveCallLabel={liveCallLabel}
-                  endLiveCallLabel={endLiveCallLabel}
-                  disabled={sending}
-                />
+              <div className="min-w-0 flex-1">
+                <p className="text-[10px] font-bold text-slate-400 uppercase leading-tight">
+                  {t("clinicalExaminer")}
+                </p>
+                <p className="text-xs text-slate-600 dark:text-slate-300 truncate">
+                  {activeManeuverMeta.nameEn}
+                </p>
               </div>
+              {vivaActive && (
+                <span className="shrink-0 max-w-[42%] text-right text-[9px] font-bold uppercase leading-tight px-2 py-1 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                  {t("oralCheckInProgress")}
+                </span>
+              )}
+            </div>
+
+            {/* Row 2: speech + live call — never overlap */}
+            <div className="px-3 pb-2 flex items-center justify-between gap-2 min-w-0">
+              <SpeechLanguageToggle
+                value={lang}
+                onChange={setLang}
+                disabled={sending || isLiveCall}
+                compact
+                labels={{
+                  auto: t('speechLangAuto'),
+                  ar: t('speechLangAr'),
+                  en: t('speechLangEn'),
+                }}
+              />
+              <LiveCallButton
+                isLiveCall={isLiveCall}
+                isLiveCallBusy={isLiveCallBusy}
+                isLiveCallSupported={isLiveCallSupported}
+                onToggleLiveCall={onToggleLiveCall}
+                liveCallLabel={liveCallLabel}
+                endLiveCallLabel={endLiveCallLabel}
+                disabled={sending}
+                compact
+              />
+            </div>
+
+            {/* Row 3: complete step on mobile */}
+            <div className="md:hidden px-3 pb-2 flex justify-end border-t border-slate-100 dark:border-slate-800 pt-2">
+              <button
+                type="button"
+                onClick={completeManeuver}
+                className="text-[11px] btn-secondary px-3 py-1.5 inline-flex items-center gap-1"
+              >
+                {t("completeStep")}
+                <ChevronRight size={14} />
+              </button>
             </div>
           </div>
 
           <ChatScrollArea
             endRef={chatEndRef}
-            scrollDeps={[messages, sending]}
+            scrollDeps={[messages, sending, galleryOpen]}
             forceScroll={sending}
             empty={messages.length === 0}
             emptyContent={
-              <p className="text-sm text-slate-400 text-center py-6">
+              <p className="text-sm text-slate-400 text-center py-4">
                 {t("examinerWillStart")}
               </p>
             }
@@ -1480,7 +1545,7 @@ function ExaminationView({
                 className={`flex ${msg.role === "STUDENT" ? "justify-end" : "justify-start"}`}
               >
                 <div
-                  className={`max-w-[85%] px-4 py-2.5 rounded-2xl text-sm ${
+                  className={`max-w-[92%] sm:max-w-[85%] px-3 py-2 sm:px-4 sm:py-2.5 rounded-2xl text-sm ${
                     msg.role === "STUDENT"
                       ? "bg-primary text-white rounded-br-sm"
                       : "bg-amber-50 border border-amber-100 text-amber-950 rounded-bl-sm"
@@ -1494,7 +1559,7 @@ function ExaminationView({
           </ChatScrollArea>
 
           <div className="shrink-0 border-t border-slate-100 dark:border-slate-800">
-            <div className="px-4 pt-3 flex justify-end">
+            <div className="hidden md:flex px-4 pt-3 justify-end">
               <button
                 type="button"
                 onClick={completeManeuver}
@@ -1530,6 +1595,7 @@ function ExaminationView({
               micError={micError}
               disabled={sessionLocked}
               isLiveCall={isLiveCall}
+              compact
             />
           </div>
         </div>
@@ -2099,11 +2165,13 @@ function ClinicalStationPanel({
   examImages,
   isAr,
   t,
+  compact = false,
 }: {
   maneuverId: string;
   examImages: ExamImage[];
   isAr: boolean;
   t: (k: string) => string;
+  compact?: boolean;
 }) {
   const stationImages = examImages.filter(
     (img) => !img.maneuver || img.maneuver === maneuverId,
@@ -2125,10 +2193,16 @@ function ClinicalStationPanel({
         ];
 
   return (
-    <div className="bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 p-4 space-y-4">
-      <p className="text-xs font-bold text-slate-500 uppercase">
-        {t("patientSlideGallery")}
-      </p>
+    <div
+      className={`bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 ${
+        compact ? 'p-2 space-y-2' : 'p-4 space-y-4'
+      }`}
+    >
+      {!compact && (
+        <p className="text-xs font-bold text-slate-500 uppercase">
+          {t("patientSlideGallery")}
+        </p>
+      )}
 
       <div className="grid gap-3">
         {displayImages.map((img, i) => {
@@ -2143,19 +2217,19 @@ function ClinicalStationPanel({
                 src={img.url}
                 controls
                 playsInline
-                className="w-full max-h-80 object-contain mx-auto bg-black"
+                className={`w-full object-contain mx-auto bg-black ${compact ? 'max-h-36' : 'max-h-80'}`}
               >
                 <track kind="captions" />
               </video>
             ) : mediaType === 'audio' ? (
-              <div className="px-4 py-6 bg-slate-900">
+              <div className={`px-4 bg-slate-900 ${compact ? 'py-3' : 'py-6'}`}>
                 <audio src={img.url} controls className="w-full" />
               </div>
             ) : (
               <img
                 src={img.url}
                 alt={t("clinicalStation")}
-                className="w-full max-h-80 object-contain mx-auto"
+                className={`w-full object-contain mx-auto ${compact ? 'max-h-36' : 'max-h-80'}`}
               />
             )}
           </div>

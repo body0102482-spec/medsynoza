@@ -34,7 +34,13 @@ export async function postTextTurn(
   sessionId: string,
   transcript: string,
   meta: VoiceTurnMeta,
+  sessionLang = 'AR',
+  language = 'ar-EG',
 ): Promise<VoiceTurnResponse> {
+  const expectArabic = shouldForceArabicTranscription(sessionLang);
+  const requestLanguage =
+    sessionLang === 'AUTO' ? 'auto' : expectArabic ? 'ar-EG' : language.startsWith('en') ? 'en-US' : language;
+
   const res = await api.post<VoiceTurnResponse>(
     `/sessions/${sessionId}/voice-turn`,
     {
@@ -42,6 +48,9 @@ export async function postTextTurn(
       endpoint: meta.endpoint,
       stage: meta.stage,
       maneuverId: meta.maneuverId,
+      language: requestLanguage,
+      forceArabic: expectArabic,
+      sessionLang,
     },
     { timeout: TEXT_TURN_TIMEOUT_MS },
   );
@@ -68,6 +77,7 @@ export async function postVoiceTurn(
       mimeType: blob.type || 'audio/webm',
       language: requestLanguage,
       forceArabic: expectArabic,
+      sessionLang,
       endpoint: meta.endpoint,
       stage: meta.stage,
       maneuverId: meta.maneuverId,

@@ -22,7 +22,8 @@ import {
 } from './arabicSttFix';
 
 const IS_IOS = typeof navigator !== 'undefined' && /iPhone|iPad|iPod/i.test(navigator.userAgent);
-const LIVE_CALL_SILENCE_MS = IS_MOBILE ? 750 : 600;
+/** End-of-utterance silence before auto-submit (voice note + live call browser STT). */
+const LIVE_CALL_SILENCE_MS = IS_MOBILE ? 2200 : 1800;
 const LIVE_CALL_MIN_SPEECH_MS = IS_MOBILE ? 400 : 320;
 
 export function isBrowserSttSupported(): boolean {

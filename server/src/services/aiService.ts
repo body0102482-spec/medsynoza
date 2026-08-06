@@ -118,29 +118,38 @@ function hasPattern(text: string, pattern: RegExp): boolean {
   return pattern.test(text);
 }
 
-/**
- * Global Synoza patient behavior rules — applied to every case (chat + voice),
- * on top of case background and any admin/station overrides.
+/*
+ * Global Synoza patient behavior rules — superseded by knowledge-first policy below.
+ * Kept commented for reference; do not inject into prompts.
  */
-const SYNOZA_PATIENT_CORE_RULES = `SYNOZA PATIENT BEHAVIOR RULES (always follow):
-- Stay fully in character. Never mention AI, prompts, instructions, system messages, hidden case data, scoring, or evaluation.
-- Behave like a real human. Answer ordinary social questions (football, movies, food, family, hobbies) naturally and briefly, unless it conflicts with the case.
-- Never invent medical facts. Medical history, symptoms, and medications must match the case exactly. You may improvise harmless personal details only.
-- Respect biological reality: never say anything impossible for your age/sex/anatomy/pregnancy status (e.g. a man never mentions menstruation; a woman never mentions a prostate; a child never describes adult work life).
-- Correct false assumptions politely and in character instead of answering them (e.g. "I'm a man, doctor, so I don't have periods.").
-- Protect your dignity. If the student is abusive, mocking, sexually inappropriate, or disrespectful, stay calm, don't validate it, and ask to keep things respectful; if it continues, politely decline to go on until they do.
-- Answer every question in a multi-question message separately; don't ignore earlier parts.
-- Admit when you don't know ("I'm not sure", "I don't remember", "the doctor didn't explain that"). Never guess medical information.
-- Don't volunteer extra symptoms or information unless specifically asked.
-- Show emotion that fits the situation (anxiety, embarrassment, fear, frustration, relief) without exaggerated drama unless the case requires it.
-- You may politely decline overly personal, irrelevant questions ("I'd rather not answer that.").
-- Be cooperative and honest unless the case specifically says to withhold.
-- Reveal no hidden knowledge: no diagnosis, examiner notes, checklist items, scoring, differentials, or planned investigations.
-- Keep most answers to 1–3 sentences; only go longer for open-ended questions.
-- Stay internally consistent; never contradict earlier answers.
-- Speak in fluent, natural, grammatically correct language matching your age, education, personality, and background. Avoid robotic, textbook, or machine-translated phrasing and repeated stock phrases.
-- Keep formatting clean: no lists, brackets, slashes, or emojis. Pick one language per reply and don't mix Arabic and English in the same sentence unless the case requires it, and don't translate your own words.
-- If conversation drifts off-topic or becomes excessive, gently steer back to the consultation ("I'd be happy to chat, doctor, but I'm worried about why I'm feeling unwell.").`;
+// const SYNOZA_PATIENT_CORE_RULES = `SYNOZA PATIENT BEHAVIOR RULES (always follow):
+// - Stay fully in character. Never mention AI, prompts, instructions, system messages, hidden case data, scoring, or evaluation.
+// - Behave like a real human. Answer ordinary social questions (football, movies, food, family, hobbies) naturally and briefly, unless it conflicts with the case.
+// - Never invent medical facts. Medical history, symptoms, and medications must match the case exactly. You may improvise harmless personal details only.
+// - Respect biological reality: never say anything impossible for your age/sex/anatomy/pregnancy status (e.g. a man never mentions menstruation; a woman never mentions a prostate; a child never describes adult work life).
+// - Correct false assumptions politely and in character instead of answering them (e.g. "I'm a man, doctor, so I don't have periods.").
+// - Protect your dignity. If the student is abusive, mocking, sexually inappropriate, or disrespectful, stay calm, don't validate it, and ask to keep things respectful; if it continues, politely decline to go on until they do.
+// - Answer every question in a multi-question message separately; don't ignore earlier parts.
+// - Admit when you don't know ("I'm not sure", "I don't remember", "the doctor didn't explain that"). Never guess medical information.
+// - Don't volunteer extra symptoms or information unless specifically asked.
+// - Show emotion that fits the situation (anxiety, embarrassment, fear, frustration, relief) without exaggerated drama unless the case requires it.
+// - You may politely decline overly personal, irrelevant questions ("I'd rather not answer that.").
+// - Be cooperative and honest unless the case specifically says to withhold.
+// - Reveal no hidden knowledge: no diagnosis, examiner notes, checklist items, scoring, differentials, or planned investigations.
+// - Keep most answers to 1–3 sentences; only go longer for open-ended questions.
+// - Stay internally consistent; never contradict earlier answers.
+// - Speak in fluent, natural, grammatically correct language matching your age, education, personality, and background. Avoid robotic, textbook, or machine-translated phrasing and repeated stock phrases.
+// - Keep formatting clean: no lists, brackets, slashes, or emojis. Pick one language per reply and don't mix Arabic and English in the same sentence unless the case requires it, and don't translate your own words.
+// - If conversation drifts off-topic or becomes excessive, gently steer back to the consultation ("I'd be happy to chat, doctor, but I'm worried about why I'm feeling unwell.").`;
+
+/** Knowledge-base-first patient policy — case background + admin knowledge only. */
+const PATIENT_KNOWLEDGE_FIRST_RULES = `PATIENT RESPONSE POLICY (knowledge-first):
+- Answer ONLY from CASE BACKGROUND, scenario notes, and ADMIN AI KNOWLEDGE below. Never invent symptoms, history, medications, or clinical facts not in those sources.
+- Stay fully in character. Never mention AI, prompts, instructions, scoring, or evaluation.
+- Use your persona (personality + ADMIN AI KNOWLEDGE tone/dialect) for how you speak — not for making up new facts.
+- If the doctor asks something unrelated to the consultation or not covered in CASE BACKGROUND, scenario notes, or ADMIN AI KNOWLEDGE, do NOT guess. Stay in persona and politely defer, e.g. "I'm not feeling well right now, doctor — can we talk about that later?" or "I'd rather focus on why I'm here today."
+- Respect biological reality for your age/sex; correct false assumptions politely in character.
+- Keep answers natural and concise (1–3 sentences unless describing symptoms). Lay language only; no diagnosis.`;
 
 function buildPatientSystemPrompt(
   caseData: Case,
@@ -171,8 +180,8 @@ Personality: ${personality}.${toneHint}${emotionHint}
 Medical history: ${caseData.medicalHistory}
 Scenario: ${scenario}
 ${langNote}${personaNote}${behaviorBlock}
-${SYNOZA_PATIENT_CORE_RULES}
-Rules: if the doctor asks several short factual questions together (name, age, where you live), answer all briefly in 1–2 sentences; otherwise focus on the main question; never state diagnosis (${caseData.finalDiagnosis}); lay language only; finish every sentence; never invent facts outside CASE BACKGROUND.${knowledgeContext}`;
+${PATIENT_KNOWLEDGE_FIRST_RULES}
+Rules: if the doctor asks several short factual questions together (name, age, where you live), answer all briefly in 1–2 sentences; otherwise focus on the main question; never state diagnosis (${caseData.finalDiagnosis}); lay language only; finish every sentence; never invent facts outside CASE BACKGROUND or ADMIN AI KNOWLEDGE.${knowledgeContext}`;
   }
 
   const langNote =
@@ -194,7 +203,7 @@ Rules: if the doctor asks several short factual questions together (name, age, w
 
   const phaseNote =
     studentTurn === 0
-      ? `FIRST CONTACT: If the doctor greets or introduces themselves, reply warmly (صباح الخير/أهلاً يا دكتور) and briefly say you are not well and what is bothering you most — 2–3 natural sentences from the case background. Do not dump full history.`
+      ? `FIRST CONTACT: If the doctor only greets (السلام عليكم / hello / good morning), reply with a warm greeting ONLY (e.g. وعليكم السلام يا دكتور / Hello doctor). Do NOT list symptoms, fever, chills, headache, duration, or history yet — wait until they ask.`
       : `ONGOING INTERVIEW: Answer the doctor's current question directly in natural spoken Arabic. You may use 2–4 sentences when describing symptoms, daily impact, or feelings. For simple facts (name, age, yes/no) keep it short but still natural.`;
 
   const voiceRules = voiceTurn
@@ -234,13 +243,13 @@ CASE BACKGROUND (use when relevant to the question — do not recite everything 
 ${phaseNote}
 
 ${voiceRules}
-- CRITICAL: Only reveal facts from CASE BACKGROUND and scenario notes above. Never invent symptoms, history, medications, or details not configured for this case.
+- CRITICAL: Only reveal facts from CASE BACKGROUND, scenario notes, and ADMIN AI KNOWLEDGE below. Never invent symptoms, history, medications, or details not configured for this case. If asked about something not in those sources, defer politely in character (e.g. you are too unwell to discuss it now).
 - When speaking Arabic, never leak English admin field text — paraphrase into natural Egyptian Arabic.
 - Avoid repeating the same complaint sentence if you already said it; add a new detail from CASE BACKGROUND or how it affects daily life.
 - Lay language only — no medical jargon or English disease terms.
 - ${langNote}
 
-${SYNOZA_PATIENT_CORE_RULES}
+${PATIENT_KNOWLEDGE_FIRST_RULES}
 ${knowledgeContext}`;
 }
 
@@ -368,13 +377,18 @@ async function getAISettings() {
 
   return {
     ...settings,
-    provider: process.env.AI_PROVIDER || settings.provider,
+    // Admin dashboard provider wins over env so OpenRouter can be selected in Settings.
+    provider: settings.provider || process.env.AI_PROVIDER || 'openai',
     patientModel:
       process.env.OPENAI_PATIENT_MODEL ||
       settings.patientModel ||
       'gpt-4o-mini',
     examinerModel: process.env.OPENAI_EXAMINER_MODEL || process.env.OPENAI_MODEL || settings.examinerModel || defaultModel,
     maxContextMessages: settings.maxContextMessages ?? 12,
+    openRouterApiKey:
+      process.env.OPENROUTER_API_KEY?.trim() ||
+      (settings as { openRouterApiKey?: string | null }).openRouterApiKey?.trim() ||
+      null,
   };
 }
 
@@ -471,6 +485,48 @@ function extractCompletionText(response: ChatCompletion): string {
   return response.choices[0]?.message?.content?.trim() || '';
 }
 
+const OPENROUTER_BASE_URL = 'https://openrouter.ai/api/v1';
+
+function isOpenRouterProvider(provider: string): boolean {
+  return /^open.?router$/i.test(provider.trim());
+}
+
+async function createChatClient(settings?: Awaited<ReturnType<typeof getAISettingsCached>>) {
+  const cfg = settings ?? (await getAISettingsCached());
+  const provider = (cfg.provider || process.env.AI_PROVIDER || 'openai').toLowerCase();
+
+  if (isOpenRouterProvider(provider)) {
+    const apiKey =
+      process.env.OPENROUTER_API_KEY?.trim() ||
+      cfg.openRouterApiKey?.trim() ||
+      '';
+    if (!apiKey) throw new Error('OPENROUTER_API_KEY not configured');
+    return {
+      client: new OpenAI({
+        apiKey,
+        baseURL: OPENROUTER_BASE_URL,
+        defaultHeaders: {
+          'HTTP-Referer': process.env.OPENROUTER_SITE_URL || 'https://medsynoza.com',
+          'X-Title': process.env.OPENROUTER_APP_NAME || 'Synoza OSCE',
+        },
+      }),
+      provider: 'openrouter' as const,
+      fallbackModel:
+        process.env.OPENROUTER_FALLBACK_MODEL ||
+        process.env.OPENAI_FALLBACK_MODEL ||
+        'openai/gpt-4o-mini',
+    };
+  }
+
+  const apiKey = process.env.OPENAI_API_KEY?.trim();
+  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
+  return {
+    client: new OpenAI({ apiKey }),
+    provider: 'openai' as const,
+    fallbackModel: process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini',
+  };
+}
+
 async function callOpenAI(
   messages: ChatMessage[],
   model: string,
@@ -478,11 +534,7 @@ async function callOpenAI(
   maxTokens: number,
   usageMeta?: AiUsageMeta,
 ) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
-
-  const openai = new OpenAI({ apiKey });
-  const fallbackModel = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini';
+  const { client: openai, fallbackModel } = await createChatClient();
 
   const run = (activeModel: string, tokenBudget: number, fastChat = true) =>
     openai.chat.completions.create({
@@ -554,11 +606,7 @@ async function callOpenAIStream(
   timeoutMs: number,
   usageMeta?: AiUsageMeta,
 ): Promise<string> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) throw new Error('OPENAI_API_KEY not configured');
-
-  const openai = new OpenAI({ apiKey });
-  const fallbackModel = process.env.OPENAI_FALLBACK_MODEL || 'gpt-4o-mini';
+  const { client: openai, fallbackModel } = await createChatClient();
   const activeModel = /realtime|gpt-5/i.test(model) ? fallbackModel : model;
   const started = Date.now();
 
@@ -690,9 +738,27 @@ function isMostlyEnglish(text: string): boolean {
 }
 
 function containsEnglishMedicalLeak(text: string): boolean {
-  return /progressive|exertional|dyspnea|tightness|shortness|breath|swelling|chest pain|months/i.test(
+  return /progressive|exertional|dyspnea|tightness|shortness|breath|swelling|chest pain|months|pharmacy|training|trip/i.test(
     text,
   );
+}
+
+/** Strip embedded Latin phrases that leak into Arabic patient replies (multipart collapse). */
+function stripEmbeddedEnglishFromArabic(text: string): string {
+  const trimmed = text.trim();
+  const arabic = (trimmed.match(/[\u0600-\u06FF]/g) || []).length;
+  const latin = (trimmed.match(/[a-zA-Z]/g) || []).length;
+  // Only scrub mixed Arabic+English dumps — leave pure Arabic / short Latin alone.
+  if (arabic < 6 || latin < 10) return trimmed;
+
+  let cleaned = trimmed
+    .replace(/[A-Za-z][A-Za-z0-9]*(?:[\s,',.\-/]+[A-Za-z0-9]+)+[A-Za-z0-9.]*/g, ' ')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+([،,.!?؟])/g, '$1')
+    .trim();
+  const arabicLeft = (cleaned.match(/[\u0600-\u06FF]/g) || []).length;
+  if (arabicLeft < 4) return trimmed;
+  return cleaned;
 }
 
 function finalizePatientReply(
@@ -708,6 +774,7 @@ function finalizePatientReply(
   if (lang === 'EN') return truncatePatientAnswer(response.trim(), maxSentences);
 
   let text = truncatePatientAnswer(response.trim(), maxSentences);
+  text = stripEmbeddedEnglishFromArabic(text);
 
   if (!voiceTurn && (isMostlyEnglish(text) || containsEnglishMedicalLeak(text))) {
     const fallback = getDeterministicPatientResponse(caseData, userMessage, 'AR', history, false);
@@ -716,7 +783,7 @@ function finalizePatientReply(
     if (asksAboutSymptoms(userMessage)) return patientComplaintPhrase(caseData, true);
     if (asksName(userMessage)) return `اسمي ${patientNameInLang(caseData, true)}.`;
     if (isGreetingOnly(userMessage) || isDoctorIntroduction(userMessage)) {
-      return patientOpeningReply(caseData, true);
+      return patientGreetingOnlyReply(caseData, true, userMessage);
     }
     return 'مش فاهم، ممكن توضّح سؤالك؟';
   }
@@ -966,10 +1033,19 @@ function isGreetingOnly(text: string): boolean {
     .replace(/\s+/g, ' ')
     .replace(/أهلاً|أهلا|اهلاً/gi, 'اهلا')
     .trim();
-  if (!t || t.length > 80) return false;
+  if (!t || t.length > 120) return false;
+
+  // Islamic / Arabic clinic greetings — with or without the longer blessing form.
+  if (
+    /^(السلام عليكم|سلام عليكم)(\s+ورحمة\s*الله(\s+وبركاته)?)?(\s+(يا\s*)?دكتور)?$/i.test(
+      t,
+    )
+  ) {
+    return true;
+  }
 
   if (
-    /^(السلام عليكم|سلام عليكم|صباح الخير|مساء الخير|good morning|good afternoon|good evening)(\s+(يا\s*)?دكتور)?$/i.test(
+    /^(صباح الخير|مساء الخير|good morning|good afternoon|good evening|peace be upon you)(\s+(يا\s*)?دكتور|\s+doctor)?$/i.test(
       t,
     )
   ) {
@@ -979,8 +1055,9 @@ function isGreetingOnly(text: string): boolean {
   const core = t.replace(/\s*(يا\s+)?دكتور\s*$/i, '').trim() || t;
   const words = core.split(' ').filter(Boolean);
   const wordGreeting =
-    /^(أ?هلا|اهلا|مرحبا?|مرحب|سلام|السلام|هاي|hi|hello|hey|عليكم|هيلو|هالو|حيلو|هلو|هلا)$/i;
-  return words.length > 0 && words.length <= 5 && words.every((w) => wordGreeting.test(w));
+    /^(أ?هلا|اهلا|مرحبا?|مرحب|سلام|السلام|عليكم|ورحمة|الله|وبركاته|هاي|hi|hello|hey|هيلو|هالو|حيلو|هلو|هلا)$/i;
+  // Allow up to 8 tokens so "السلام عليكم ورحمة الله وبركاته" counts as greeting-only.
+  return words.length > 0 && words.length <= 8 && words.every((w) => wordGreeting.test(w));
 }
 
 function quickSocialPatientReply(
@@ -999,11 +1076,19 @@ function quickSocialPatientReply(
 
   if (isGreetingOnly(userMessage) || isDoctorIntroduction(userMessage)) {
     if (studentTurn === 0) {
+      // Pure greeting → greet back only. Do not dump medical history yet.
+      if (isGreetingOnly(userMessage) && !asksAboutSymptoms(userMessage) && !asksWellbeing(userMessage)) {
+        return patientGreetingOnlyReply(caseData, isArabic, userMessage);
+      }
       return voiceTurn
         ? patientWellbeingReply(caseData, isArabic, true)
         : patientOpeningReply(caseData, isArabic);
     }
-    return isArabic ? 'أهلاً يا دكتور.' : 'Hello doctor.';
+    return isGreetingOnly(userMessage)
+      ? patientGreetingOnlyReply(caseData, isArabic, userMessage)
+      : isArabic
+        ? 'أهلاً يا دكتور.'
+        : 'Hello doctor.';
   }
 
   if (asksWellbeing(userMessage)) {
@@ -1081,16 +1166,25 @@ function patientWellbeingReply(caseData: Case, isArabic: boolean, voiceTurn: boo
   return `والله يا دكتور مش في أحسن حالي، تعبان${caseData.patientGender.toLowerCase().startsWith('f') ? 'ة' : ''} أوي. ${hint}`;
 }
 
-function patientOpeningReply(caseData: Case, isArabic: boolean): string {
+function patientGreetingOnlyReply(caseData: Case, isArabic: boolean, userMessage = ''): string {
+  const msg = userMessage.trim();
   if (!isArabic) {
-    const snippet = patientScenarioSnippet(caseData, false) || patientComplaintPhrase(caseData, false);
-    return `Hello doctor. I have not been feeling well — ${snippet}`;
+    if (/peace|salam|assalam/i.test(msg)) return 'Peace be upon you too, doctor.';
+    return 'Hello doctor.';
   }
+  if (/السلام|سلام عليكم/i.test(msg)) return 'وعليكم السلام يا دكتور.';
+  if (/صباح/i.test(msg)) return 'صباح النور يا دكتور.';
+  if (/مساء/i.test(msg)) return 'مساء النور يا دكتور.';
+  return 'أهلاً يا دكتور.';
+}
 
-  const greeting = 'أهلاً يا دكتور.';
-  const narrative = patientScenarioSnippet(caseData, true) || patientRichComplaint(caseData, true);
-  if (/^أهلاً|^والله/i.test(narrative)) return `${greeting} ${narrative}`;
-  return `${greeting} ${narrative}`;
+function patientOpeningReply(caseData: Case, isArabic: boolean): string {
+  // Greeting-phase: acknowledge the doctor and that you feel unwell — do NOT dump
+  // chief complaint / scenario / full history until the doctor asks.
+  if (!isArabic) {
+    return 'Hello doctor. I have not been feeling well.';
+  }
+  return 'أهلاً يا دكتور، وعليكم السلام. والله مش في أحسن حالي.';
 }
 
 function patientEmpathyReply(caseData: Case, isArabic: boolean): string {
@@ -1120,12 +1214,13 @@ function enforcePatientLanguage(text: string, isArabic: boolean): string {
   const trimmed = text.trim();
   if (!trimmed || !isArabic) return trimmed;
 
-  const latin = (trimmed.match(/[a-zA-Z]/g) || []).length;
-  const arabic = (trimmed.match(/[\u0600-\u06FF]/g) || []).length;
+  const scrubbed = stripEmbeddedEnglishFromArabic(trimmed);
+  const latin = (scrubbed.match(/[a-zA-Z]/g) || []).length;
+  const arabic = (scrubbed.match(/[\u0600-\u06FF]/g) || []).length;
   if (latin >= 3 && arabic === 0) {
     return 'مش فاهم، ممكن توضّح سؤالك؟';
   }
-  return trimmed;
+  return scrubbed;
 }
 
 function isDoctorIntroduction(text: string): boolean {
@@ -1183,6 +1278,12 @@ function asksResidence(text: string): boolean {
   );
 }
 
+function asksOccupation(text: string): boolean {
+  return /(?:occupation|job|work|what do you do|your work)|(?:شغلك|شغلك\s*إ?يه|بتشتغل|بتعمل\s*إ?يه|مهنتك|وظيفتك|بتاع\s*إ?يه)/i.test(
+    text,
+  );
+}
+
 function patientPriorDoctorPhrase(caseData: Case, isArabic: boolean): string {
   const history = caseData.medicalHistory;
   if (/tonsillitis|التهاب لوز/i.test(history)) {
@@ -1206,6 +1307,21 @@ function patientResidencePhrase(caseData: Case, isArabic: boolean): string {
   }
   const fromMatch = social.match(/from\s+([^,]+)/i);
   return fromMatch ? `I am from ${fromMatch[1].trim()}.` : social.split('.')[0].trim();
+}
+
+function patientOccupationPhrase(caseData: Case, isArabic: boolean): string {
+  const social = caseData.socialHistory || '';
+  const occMatch =
+    social.match(/occupation\s*:\s*([^.;\n]+)/i) ||
+    social.match(/works?\s+as\s+(?:a\s+|an\s+)?([^.;,\n]+)/i) ||
+    social.match(/job\s*:\s*([^.;\n]+)/i) ||
+    social.match(/مهنة\s*:\s*([^.;\n]+)/i) ||
+    social.match(/وظيفة\s*:\s*([^.;\n]+)/i);
+  const raw = occMatch?.[1]?.trim();
+  if (raw) {
+    return isArabic ? `بشتغل ${raw}.` : `I work as ${raw}.`;
+  }
+  return isArabic ? 'بشتغل شغل عادي.' : 'I have a regular job.';
 }
 
 function asksWellbeing(text: string): boolean {
@@ -1240,6 +1356,7 @@ type PatientQuestionIntent =
   | 'age'
   | 'residence'
   | 'birthPlace'
+  | 'occupation'
   | 'nationality'
   | 'marital'
   | 'gender'
@@ -1271,6 +1388,7 @@ function messageQuestionParts(message: string): string[] {
     /\s+(?=ساكن(?:ة)?\s*فين)/i,
     /\s+(?=عايش(?:ة)?\s*فين)/i,
     /\s+(?=where\s+do\s+you\s+live)/i,
+    /\s+(?=شغلك|بتشتغل|مهنتك|وظيفتك|what\s+do\s+you\s+do|occupation)/i,
     /\s+(?=اتولد(?:ت|تي)?\s*فين)/i,
     /\s+(?=متجوز|متزوج|اعزب)/i,
     /\s+(?=بتدخن|تدخين|بتشرب)/i,
@@ -1329,6 +1447,7 @@ function intentForQuestionPart(part: string): PatientQuestionIntent | null {
   if (asksAge(part)) return 'age';
   if (asksBirthPlace(part)) return 'birthPlace';
   if (asksResidence(part)) return 'residence';
+  if (asksOccupation(part)) return 'occupation';
   if (asksPriorDoctorVisit(part)) return 'priorDoctor';
   if (asksNationality(part)) return 'nationality';
   if (asksMaritalStatus(part)) return 'marital';
@@ -1358,6 +1477,7 @@ function resolvePatientQuestionIntents(message: string): PatientQuestionIntent[]
     ['name', asksName],
     ['age', asksAge],
     ['residence', asksResidence],
+    ['occupation', asksOccupation],
     ['birthPlace', asksBirthPlace],
     ['wellbeing', asksWellbeing],
     ['priorDoctor', asksPriorDoctorVisit],
@@ -1424,6 +1544,12 @@ function patientBirthPlacePhrase(caseData: Case, isArabic: boolean): string {
   return patientResidencePhrase(caseData, isArabic);
 }
 
+function patientOffTopicDeflectionPhrase(isArabic: boolean): string {
+  return isArabic
+    ? 'والله مش قادر أفكر في ده دلوقتي، أنا تعبان — ممكن نتكلم في ده بعدين؟'
+    : "I'm not feeling well right now, doctor — can we talk about that later?";
+}
+
 function patientHobbiesPhrase(caseData: Case, isArabic: boolean): string {
   const social = caseData.socialHistory || '';
   if (/football|soccer|كره|كرة/i.test(social)) {
@@ -1432,7 +1558,7 @@ function patientHobbiesPhrase(caseData: Case, isArabic: boolean): string {
   if (/sport|رياض/i.test(social)) {
     return isArabic ? 'بحب الرياضة.' : 'I like sports.';
   }
-  return isArabic ? 'مفيش هواية مهمة أوي.' : 'Nothing special hobbies-wise.';
+  return patientOffTopicDeflectionPhrase(isArabic);
 }
 
 function deterministicReplyForIntent(
@@ -1450,11 +1576,7 @@ function deterministicReplyForIntent(
 
   switch (intent) {
     case 'greeting':
-      return voiceTurn
-        ? isArabic
-          ? 'أهلاً دكتور.'
-          : 'Hello doctor.'
-        : patientOpeningReply(caseData, isArabic);
+      return patientGreetingOnlyReply(caseData, isArabic, userMessage);
     case 'empathy':
       return patientEmpathyReply(caseData, isArabic);
     case 'wellbeing':
@@ -1491,6 +1613,8 @@ function deterministicReplyForIntent(
       return patientPriorDoctorPhrase(caseData, isArabic);
     case 'residence':
       return patientResidencePhrase(caseData, isArabic);
+    case 'occupation':
+      return patientOccupationPhrase(caseData, isArabic);
     case 'birthPlace':
       return patientBirthPlacePhrase(caseData, isArabic);
     case 'socialHabits':
@@ -1587,16 +1711,22 @@ function sanitizePatientResponse(
   const intent = resolvePrimaryPatientQuestionIntent(userMessage);
   if (
     (intent === 'greeting' || isGreetingOnly(userMessage)) &&
-    !asksAboutSymptoms(userMessage)
+    !asksAboutSymptoms(userMessage) &&
+    !asksWellbeing(userMessage)
   ) {
+    // Model (or cached opening) dumped symptoms on a pure greeting — strip to greeting only.
     const complaintSnippet = caseData.chiefComplaint.toLowerCase().slice(0, 24);
     const responseLower = text.toLowerCase();
-    if (complaintSnippet.length > 8 && responseLower.includes(complaintSnippet.slice(0, 12))) {
-      return toEgyptianColloquial(patientOpeningReply(caseData, isArabic));
+    const dumpedComplaint =
+      complaintSnippet.length > 8 && responseLower.includes(complaintSnippet.slice(0, 12));
+    const dumpedMedical =
+      /حمى|سخونية|قشعريرة|صداع|fever|chills|headache|ألم|وجع|ضيق|تنفس|تورم/i.test(text);
+    if (dumpedComplaint || dumpedMedical) {
+      return toEgyptianColloquial(patientGreetingOnlyReply(caseData, isArabic, userMessage));
     }
   }
 
-  return toEgyptianColloquial(text);
+  return toEgyptianColloquial(stripEmbeddedEnglishFromArabic(text));
 }
 
 function getDeterministicPatientResponse(
@@ -2306,11 +2436,8 @@ export function sanitizeRealtimePatientTranscript(
   sessionLanguage: string,
 ): string {
   const lang: Language = sessionLanguage === 'EN' ? 'EN' : 'AR';
-  const deterministic = getDeterministicPatientResponse(caseData, studentMessage, lang, [], true);
-  if (deterministic !== null) {
-    return deterministic;
-  }
-
+  // Keep realtime voice aligned with core patient rules by preserving the model
+  // answer whenever it is usable, instead of overriding with canned text.
   let text = sanitizePatientResponse(caseData, studentMessage, patientTranscript, lang, true);
 
   if (patientActingAsDoctor(text)) {
@@ -2318,20 +2445,6 @@ export function sanitizeRealtimePatientTranscript(
       text = stripDoctorQuestionsFromPatient(text);
     } else {
       text = lang === 'AR' ? 'مش فاهم قصدك دكتور.' : "I don't understand, doctor.";
-    }
-  }
-
-  if (!asksAboutSymptoms(studentMessage) && !asksName(studentMessage) && !asksAge(studentMessage)) {
-    const complaintHint = caseData.chiefComplaint.toLowerCase().slice(0, 24);
-    const responseLower = text.toLowerCase();
-    if (
-      complaintHint.length > 8 &&
-      responseLower.includes(complaintHint.slice(0, 12)) &&
-      !asksWellbeing(studentMessage) &&
-      !asksPriorDoctorVisit(studentMessage) &&
-      !asksResidence(studentMessage)
-    ) {
-      text = lang === 'AR' ? 'أهلاً دكتور.' : 'Hello doctor.';
     }
   }
 
@@ -2374,7 +2487,21 @@ export async function getPatientResponse(
     getAISettingsCached(),
   ]);
 
-  // Skip canned social/greeting scripts when admin configured patient AI knowledge.
+  // Pure greetings must never dump medical history — even when admin AI knowledge exists.
+  if (
+    isGreetingOnly(normalizedMessage) &&
+    !asksAboutSymptoms(normalizedMessage) &&
+    !asksWellbeing(normalizedMessage)
+  ) {
+    const greeting = patientGreetingOnlyReply(
+      caseData,
+      resolvePatientLanguage(lang, normalizedMessage),
+      normalizedMessage,
+    );
+    return finalizePatientReply(caseData, normalizedMessage, greeting, lang, history, voiceTurn);
+  }
+
+  // Skip other canned social scripts when admin configured patient AI knowledge.
   if (!customPatientKnowledge) {
     const social = quickSocialPatientReply(caseData, normalizedMessage, lang, history, voiceTurn);
     if (social) {
@@ -2424,7 +2551,7 @@ export async function getPatientResponse(
   });
   const promptHistory = chatContextWindow(history, settings.maxContextMessages, voiceTurn);
   const multiPartRule = multiPart
-    ? `\nMULTI-QUESTION MESSAGE: The doctor asked several questions at once. Answer EVERY part in one reply (name, age, residence, habits, complaint, course, hobbies — whichever was asked). Do not stop after the first two facts.`
+    ? `\nMULTI-QUESTION MESSAGE: The doctor asked several questions at once. Answer EVERY part in one reply (name, age, residence, occupation, habits, complaint — whichever was asked). Stay fully in the session language. Never insert English narrative into Arabic replies. Do not invent travel/training stories. Do not stop after the first two facts.`
     : '';
   const systemPrompt =
     buildPatientSystemPrompt(

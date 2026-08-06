@@ -467,6 +467,8 @@ model AISettings {
   examinerSystemPromptAr String?
   examinerSystemPromptEn String?
   maxContextMessages     Int      @default(12)
+  /// OpenRouter API key (sk-or-v1-...). Used when provider is "openrouter".
+  openRouterApiKey       String?
   updatedAt              DateTime @updatedAt
 }
 
