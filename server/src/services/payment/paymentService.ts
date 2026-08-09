@@ -1,7 +1,7 @@
 import type { PaymentProductType, SubscriptionPlan } from '@prisma/client';
 import { prisma } from '../../lib/prisma.js';
 import { resolveUserUniversityId } from '../../lib/universityScope.js';
-import { activatePlan, getActiveSubscription, getPlanConfig, isPaidPlan, PLAN_CATALOG } from '../subscriptionService.js';
+import { activatePlan, getPlanConfig, PLAN_CATALOG } from '../subscriptionService.js';
 import { getModuleFromDb, grantModuleAccess, isPurchasableModule, userHasModuleAccess } from '../qbankService.js';
 import {
   createPaymobCheckout,
@@ -9,8 +9,16 @@ import {
   isPaymobSuccess,
   verifyPaymobTransactionHmac,
 } from './paymobProvider.js';
+import {
+  createKashierCheckoutUrl,
+  isKashierConfigured,
+  isKashierOrderCaptured,
+  isKashierSuccess,
+  normalizeKashierPayload,
+  verifyKashierSignature,
+} from './kashierProvider.js';
 
-export type PaymentProviderName = 'none' | 'mock' | 'paymob';
+export type PaymentProviderName = 'none' | 'mock' | 'paymob' | 'kashier';
 
 const PAID_PLAN_IDS = ['PACKAGE_50', 'PACKAGE_150', 'PACKAGE_300'] as const;
 export type CheckoutPlanId = (typeof PAID_PLAN_IDS)[number];
@@ -24,6 +32,10 @@ export function getPaymentProvider(): PaymentProviderName {
     // Until Paymob keys are configured, allow instant plan activation.
     return process.env.PAYMENT_MOCK_FALLBACK === 'false' ? 'none' : 'mock';
   }
+  if (requested === 'kashier') {
+    if (isKashierConfigured()) return 'kashier';
+    return process.env.PAYMENT_MOCK_FALLBACK === 'false' ? 'none' : 'mock';
+  }
   return 'none';
 }
 
@@ -35,6 +47,7 @@ export function isPaymentConfigured(): boolean {
   const provider = getPaymentProvider();
   if (provider === 'mock') return true;
   if (provider === 'paymob') return isPaymobConfigured();
+  if (provider === 'kashier') return isKashierConfigured();
   return false;
 }
 
@@ -67,11 +80,6 @@ export function isCheckoutPlanId(planId: string): planId is CheckoutPlanId {
 export async function createCheckout(userId: string, planId: CheckoutPlanId) {
   const config = getPlanConfig(planId as SubscriptionPlan);
   if (!config.priceEgp) throw new Error('INVALID_PLAN');
-
-  const active = await getActiveSubscription(userId);
-  if (active && isPaidPlan(active.plan)) {
-    throw new Error('ALREADY_SUBSCRIBED');
-  }
 
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user) throw new Error('USER_NOT_FOUND');
@@ -126,6 +134,32 @@ export async function createCheckout(userId: string, planId: CheckoutPlanId) {
       merchantOrderId: order.merchantOrderId,
       provider: 'paymob',
       iframeUrl: paymob.checkoutUrl,
+    };
+  }
+
+  if (provider === 'kashier') {
+    if (!isKashierConfigured()) {
+      throw new Error('KASHIER_NOT_CONFIGURED');
+    }
+
+    const checkoutUrl = createKashierCheckoutUrl({
+      merchantOrderId: order.merchantOrderId,
+      amountEgp: config.priceEgp,
+      merchantRedirect: getKashierReturnUrl(),
+      serverWebhook: getKashierWebhookUrl(),
+      display: user.preferredLang === 'ar' ? 'ar' : 'en',
+    });
+
+    await prisma.paymentOrder.update({
+      where: { id: order.id },
+      data: { providerOrderId: order.merchantOrderId },
+    });
+
+    return {
+      orderId: order.id,
+      merchantOrderId: order.merchantOrderId,
+      provider: 'kashier',
+      iframeUrl: checkoutUrl,
     };
   }
 
@@ -205,6 +239,34 @@ export async function createModuleCheckout(userId: string, termId: string, modul
     };
   }
 
+  if (provider === 'kashier') {
+    if (!isKashierConfigured()) {
+      throw new Error('KASHIER_NOT_CONFIGURED');
+    }
+
+    const checkoutUrl = createKashierCheckoutUrl({
+      merchantOrderId: order.merchantOrderId,
+      amountEgp: mod.priceEgp,
+      merchantRedirect: getKashierReturnUrl(),
+      serverWebhook: getKashierWebhookUrl(),
+      display: user.preferredLang === 'ar' ? 'ar' : 'en',
+    });
+
+    await prisma.paymentOrder.update({
+      where: { id: order.id },
+      data: { providerOrderId: order.merchantOrderId },
+    });
+
+    return {
+      orderId: order.id,
+      merchantOrderId: order.merchantOrderId,
+      provider: 'kashier',
+      iframeUrl: checkoutUrl,
+      termId,
+      moduleId,
+    };
+  }
+
   throw new Error('PAYMENT_NOT_CONFIGURED');
 }
 
@@ -269,9 +331,6 @@ async function fulfillPaidOrder(order: {
   }
 
   if (!order.plan) return;
-
-  const active = await getActiveSubscription(order.userId);
-  if (active && isPaidPlan(active.plan)) return;
 
   await activatePlan(order.userId, order.plan as import('@prisma/client').SubscriptionPlan);
 }
@@ -371,4 +430,77 @@ export async function handlePaymobReturn(query: Record<string, string | undefine
 
 export function getPaymobReturnUrl(): string {
   return `${serverBaseUrl()}/api/payments/return/paymob`;
+}
+
+export function getKashierReturnUrl(): string {
+  return `${serverBaseUrl()}/api/payments/return/kashier`;
+}
+
+export function getKashierWebhookUrl(): string {
+  return `${serverBaseUrl()}/api/payments/webhook/kashier`;
+}
+
+export async function handleKashierReturn(query: Record<string, string | undefined>) {
+  const merchantOrderId = query.merchantOrderId || query.orderId || query.paymentRequestId || '';
+  const signature = query.signature || '';
+  const paymentStatus = query.paymentStatus || '';
+  const transactionId = query.transactionId || query.id;
+
+  const order = merchantOrderId
+    ? await prisma.paymentOrder.findUnique({ where: { merchantOrderId } })
+    : null;
+  if (!order) {
+    return { redirect: `${clientBaseUrl()}/student/payment/failed?reason=order_not_found` };
+  }
+
+  const success = isKashierSuccess(paymentStatus);
+  let confirmed = false;
+
+  if (success) {
+    confirmed = signature ? verifyKashierSignature(query, signature) : false;
+    if (!confirmed) {
+      // Signature could not be validated — double-check with the orders API.
+      confirmed = await isKashierOrderCaptured(merchantOrderId);
+    }
+    if (confirmed && order.status !== 'PAID') {
+      await finalizePaidOrder(order.id, transactionId);
+    }
+  } else if (order.status === 'PENDING') {
+    await finalizeFailedOrder(order.id, 'Payment cancelled or declined');
+  }
+
+  const target = success ? (confirmed ? 'success' : 'failed') : 'failed';
+  return {
+    redirect: `${clientBaseUrl()}/student/payment/${target}?order=${encodeURIComponent(merchantOrderId)}`,
+  };
+}
+
+export async function handleKashierWebhook(body: Record<string, unknown>) {
+  const { params, signature } = normalizeKashierPayload(body);
+  const merchantOrderId = String(
+    params.merchantOrderId || params.orderId || params.paymentRequestId || '',
+  );
+  const paymentStatus = String(params.paymentStatus || params.status || '');
+  const transactionId = String(params.transactionId || params.id || '');
+
+  const order = merchantOrderId
+    ? await prisma.paymentOrder.findUnique({ where: { merchantOrderId } })
+    : null;
+  if (!order) return { ok: false as const, reason: 'ORDER_NOT_FOUND' as const };
+
+  const success = isKashierSuccess(paymentStatus);
+  let confirmed = signature ? verifyKashierSignature(params, signature) : false;
+  if (success && !confirmed) {
+    confirmed = await isKashierOrderCaptured(merchantOrderId);
+  }
+
+  if (success && confirmed) {
+    await finalizePaidOrder(order.id, transactionId);
+    return { ok: true as const, status: 'PAID' as const };
+  }
+
+  if (!success && order.status === 'PENDING') {
+    await finalizeFailedOrder(order.id, 'Payment declined');
+  }
+  return { ok: true as const, status: (order.status.toLowerCase() as 'paid' | 'failed' | 'pending' | 'cancelled') };
 }

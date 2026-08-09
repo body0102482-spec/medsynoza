@@ -208,6 +208,18 @@ try {
     'AR',
   );
   assert(/اسمي|طارق/i.test(singleName), 'single name question still works', singleName);
+
+  const multiEn = await getPatientResponse(
+    caseData,
+    [{ role: 'STUDENT', content: 'hello' }],
+    'what is your name, how much do you weigh, how old are you and are you married',
+    'EN',
+  );
+  console.log('  multiEn:', multiEn);
+  assert(/name is|Tarek/i.test(multiEn), 'EN multipart includes name', multiEn);
+  assert(/weigh|kg|weight|not sure/i.test(multiEn), 'EN multipart answers weight', multiEn);
+  assert(/17|years old/i.test(multiEn), 'EN multipart includes age', multiEn);
+  assert(/married/i.test(multiEn), 'EN multipart includes marital', multiEn);
 } catch (err) {
   const msg = err instanceof Error ? err.message : String(err);
   if (/openRouterApiKey|does not exist|P2022/i.test(msg)) {

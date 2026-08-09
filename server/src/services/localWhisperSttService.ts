@@ -4,17 +4,10 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { promisify } from 'util';
-import wavefile from 'wavefile';
 import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from '@xenova/transformers';
+import { hasSpeechEnergy, wavBufferToFloat32 } from './audioSpeechDetector.js';
 
 const execFileAsync = promisify(execFile);
-
-// wavefile is CJS — named ESM import fails under Node; use default export.
-const WaveFile = (wavefile as unknown as { WaveFile: new (buffer?: Buffer) => {
-  toBitDepth: (depth: string) => void;
-  toSampleRate: (rate: number) => void;
-  getSamples: (channel?: boolean, type?: typeof Float32Array) => unknown;
-} }).WaveFile;
 
 function resolveWhisperLanguage(language: string, forceArabic?: boolean): 'ar' | 'en' | 'auto' {
   if (forceArabic) return 'ar';
@@ -54,51 +47,6 @@ function extensionForMime(mimeType: string): string {
 async function convertToWav16kMono(inputPath: string, outputPath: string): Promise<void> {
   const ffmpeg = await getFfmpegExecutable();
   await execFileAsync(ffmpeg, ['-y', '-i', inputPath, '-ar', '16000', '-ac', '1', '-f', 'wav', outputPath]);
-}
-
-function wavBufferToFloat32(wavBuffer: Buffer): Float32Array {
-  const wav = new WaveFile(wavBuffer);
-  wav.toBitDepth('32f');
-  wav.toSampleRate(16000);
-  const rawSamples = wav.getSamples(false, Float32Array) as unknown;
-
-  if (Array.isArray(rawSamples)) {
-    const channels = rawSamples as Float32Array[];
-    if (channels.length > 1) {
-      const merged = new Float32Array(channels[0].length);
-      const scale = Math.sqrt(2);
-      for (let i = 0; i < merged.length; i += 1) {
-        merged[i] = (scale * (channels[0][i] + channels[1][i])) / 2;
-      }
-      return merged;
-    }
-    return channels[0];
-  }
-
-  if (rawSamples instanceof Float32Array) {
-    return rawSamples;
-  }
-
-  return Float32Array.from(rawSamples as ArrayLike<number>);
-}
-
-function measureAudioLevel(samples: Float32Array): { rms: number; peak: number } {
-  let sumSq = 0;
-  let peak = 0;
-  for (let i = 0; i < samples.length; i += 1) {
-    const value = samples[i];
-    sumSq += value * value;
-    const abs = Math.abs(value);
-    if (abs > peak) peak = abs;
-  }
-  return { rms: Math.sqrt(sumSq / samples.length), peak };
-}
-
-function audioLooksLikeSpeech(samples: Float32Array): boolean {
-  const { rms, peak } = measureAudioLevel(samples);
-  // Browser noise suppression and laptop microphones can produce quiet but valid speech.
-  // Keep this below the client VAD threshold so accepted recordings are not rejected here.
-  return rms >= 0.0025 && peak >= 0.01;
 }
 
 function pickTranscriptText(result: unknown): string {
@@ -159,7 +107,7 @@ export async function transcribeWithLocalWhisper(
       throw new Error('recording-too-short');
     }
 
-    if (!audioLooksLikeSpeech(audioData)) {
+    if (!hasSpeechEnergy(audioData)) {
       throw new Error('recording-too-short');
     }
 

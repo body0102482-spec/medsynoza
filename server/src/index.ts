@@ -43,7 +43,17 @@ dotenv.config({ path: path.resolve(__dirname, "../../.env") });
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-app.use(helmet({ crossOriginResourcePolicy: { policy: "cross-origin" } }));
+app.use(
+  helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
+    contentSecurityPolicy: {
+      directives: {
+        ...helmet.contentSecurityPolicy.getDefaultDirectives(),
+        "frame-src": ["'self'", "https://*.kashier.io"],
+      },
+    },
+  }),
+);
 app.use(
   cors({
     origin: process.env.CLIENT_URL || "http://localhost:5173",
@@ -51,6 +61,7 @@ app.use(
   }),
 );
 app.use(express.json({ limit: "20mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -145,16 +156,19 @@ app
       const requested = (
         process.env.PAYMENT_PROVIDER || "paymob"
       ).toLowerCase();
-      if (requested === "paymob" && provider === "mock") {
+      if (
+        (requested === "paymob" && provider === "mock") ||
+        (requested === "kashier" && provider === "mock")
+      ) {
         console.log(
-          "[payments] Paymob not configured — using instant mock activation until gateway is connected",
+          `[payments] ${requested} not configured — using instant mock activation until gateway is connected`,
         );
       } else {
         console.log(`[payments] Gateway ready (${provider})`);
       }
     } else {
       console.warn(
-        "[payments] Not configured — set PAYMENT_PROVIDER=paymob and Paymob keys",
+        "[payments] Not configured — set PAYMENT_PROVIDER=kashier (or paymob) and the matching gateway keys",
       );
     }
   })

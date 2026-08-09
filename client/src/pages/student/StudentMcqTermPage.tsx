@@ -68,7 +68,7 @@ export default function StudentMcqTermPage() {
         return;
       }
 
-      if (provider === 'paymob' && iframeUrl) {
+      if ((provider === 'paymob' || provider === 'kashier') && iframeUrl) {
         sessionStorage.setItem(`synoza_checkout_${merchantOrderId}`, iframeUrl);
         navigate(`/student/payment/checkout?order=${encodeURIComponent(merchantOrderId)}`, {
           state: { iframeUrl, provider, termId, moduleId },

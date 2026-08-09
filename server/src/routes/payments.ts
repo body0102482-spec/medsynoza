@@ -8,8 +8,11 @@ import {
   getOrderForUser,
   getPaymentPublicConfig,
   getPaymobReturnUrl,
+  getKashierReturnUrl,
   handlePaymobReturn,
   handlePaymobWebhook,
+  handleKashierReturn,
+  handleKashierWebhook,
   isCheckoutPlanId,
   isPaymentEnabled,
 } from '../services/payment/paymentService.js';
@@ -24,6 +27,7 @@ router.get('/setup', authenticate, (_req, res) => {
   res.json({
     ...getPaymentPublicConfig(),
     returnUrl: getPaymobReturnUrl(),
+    kashierReturnUrl: getKashierReturnUrl(),
   });
 });
 
@@ -49,11 +53,11 @@ router.post(
       res.json(checkout);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'CHECKOUT_FAILED';
-      if (message === 'ALREADY_SUBSCRIBED') {
-        return res.status(409).json({ error: 'You already have an active paid plan' });
-      }
       if (message === 'PAYMOB_NOT_CONFIGURED') {
         return res.status(503).json({ error: 'PAYMOB_NOT_CONFIGURED' });
+      }
+      if (message === 'KASHIER_NOT_CONFIGURED') {
+        return res.status(503).json({ error: 'KASHIER_NOT_CONFIGURED' });
       }
       console.error('[payments/checkout]', err);
       return res.status(500).json({ error: 'Could not start checkout' });
@@ -89,6 +93,9 @@ router.post(
       }
       if (message === 'PAYMOB_NOT_CONFIGURED') {
         return res.status(503).json({ error: 'PAYMOB_NOT_CONFIGURED' });
+      }
+      if (message === 'KASHIER_NOT_CONFIGURED') {
+        return res.status(503).json({ error: 'KASHIER_NOT_CONFIGURED' });
       }
       console.error('[payments/checkout-module]', err);
       return res.status(500).json({ error: 'Could not start checkout' });
@@ -139,6 +146,33 @@ router.post('/webhook/paymob', async (req: Request, res: Response) => {
     res.json({ received: true, status: result.status });
   } catch (err) {
     console.error('[payments/webhook/paymob]', err);
+    res.status(500).json({ error: 'webhook failed' });
+  }
+});
+
+router.get('/return/kashier', async (req: Request, res: Response) => {
+  const query = Object.fromEntries(
+    Object.entries(req.query).map(([key, value]) => [key, Array.isArray(value) ? value[0] : value]),
+  ) as Record<string, string | undefined>;
+
+  try {
+    const result = await handleKashierReturn(query);
+    res.redirect(result.redirect);
+  } catch (err) {
+    console.error('[payments/return/kashier]', err);
+    res.redirect(`${process.env.CLIENT_URL || 'http://localhost:5173'}/student/payment/failed`);
+  }
+});
+
+router.post('/webhook/kashier', async (req: Request, res: Response) => {
+  try {
+    const result = await handleKashierWebhook(req.body);
+    if (!result.ok) {
+      return res.status(400).json({ error: result.reason || 'invalid' });
+    }
+    res.json({ received: true, status: result.status });
+  } catch (err) {
+    console.error('[payments/webhook/kashier]', err);
     res.status(500).json({ error: 'webhook failed' });
   }
 });

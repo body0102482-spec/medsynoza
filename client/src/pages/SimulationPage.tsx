@@ -2069,7 +2069,7 @@ function DiagnosisView({
         </div>
       </div>
 
-      <div className="shrink-0 sm:shrink sm:min-h-[280px] sm:max-h-[45vh] sm:flex-1 card overflow-hidden flex flex-col border-t border-slate-200 dark:border-slate-800 rounded-none sm:rounded-t-2xl mx-0 sm:mx-4 sm:mb-4">
+      <div className="shrink-0 min-h-0 max-h-[55vh] sm:shrink sm:min-h-[280px] sm:max-h-[45vh] sm:flex-1 card overflow-hidden flex flex-col border-t border-slate-200 dark:border-slate-800 rounded-none sm:rounded-t-2xl mx-0 sm:mx-4 sm:mb-4">
         <div className="shrink-0 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-800">
           <div className="px-4 py-3 flex items-center justify-between gap-3">
             <h3 className="text-xs font-bold text-slate-400 uppercase">
@@ -2207,6 +2207,7 @@ function ClinicalStationPanel({
       <div className="grid gap-3">
         {displayImages.map((img, i) => {
           const mediaType = inferMediaType(img);
+          const caption = (isAr ? img.captionAr : img.caption) || img.caption || img.captionAr;
           return (
           <div
             key={`${img.url}-${i}`}
@@ -2228,9 +2229,19 @@ function ClinicalStationPanel({
             ) : (
               <img
                 src={img.url}
-                alt={t("clinicalStation")}
+                alt={caption || t("clinicalStation")}
                 className={`w-full object-contain mx-auto ${compact ? 'max-h-36' : 'max-h-80'}`}
               />
+            )}
+            {caption && (
+              <div
+                className={`w-full bg-slate-900/90 text-slate-100 font-medium leading-snug ${
+                  compact ? 'px-2.5 py-1 text-[11px]' : 'px-3 py-1.5 text-xs'
+                }`}
+                dir="auto"
+              >
+                {caption}
+              </div>
             )}
           </div>
           );

@@ -8,7 +8,7 @@ import paramiko
 HOST = "77.237.232.181"
 PORT = 2222
 USER = "root"
-PASSWORD = "shtlIf9LAyf1yk3bKF4J"
+PASSWORD = "77z/8(G7&ls)"
 APP = "/home/adminanmkavps/synoza.anmka.com"
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")

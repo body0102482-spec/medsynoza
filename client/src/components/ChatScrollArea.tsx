@@ -60,6 +60,22 @@ export function ChatScrollArea({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [forceScroll, scrollToBottom, ...scrollDeps]);
 
+  // Re-anchor to the bottom whenever the scroll area (or its content) changes
+  // size — e.g. the collapsible clinical gallery opening/closing or media
+  // loading above the chat. Without this the container keeps a stale scrollTop
+  // and the conversation appears to jump or get stuck mid-scroll.
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(() => {
+      if (stickToBottomRef.current) scrollToBottom('auto');
+    });
+    observer.observe(el);
+    const content = el.firstElementChild;
+    if (content) observer.observe(content);
+    return () => observer.disconnect();
+  }, [scrollToBottom]);
+
   return (
     <div
       ref={containerRef}

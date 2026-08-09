@@ -48,8 +48,18 @@ const SILENCE_MS = IS_MOBILE ? 2200 : 1800;
 const MIN_SPEECH_MS = IS_MOBILE ? 350 : 380;
 const MAX_RECORDING_MS = IS_MOBILE ? 9000 : 12000;
 const NO_SPEECH_TIMEOUT_MS = IS_MOBILE ? 7000 : 6000;
-/** Phone mics + quiet non-native speech need a lower gate than desktop. */
-const SPEECH_RMS_THRESHOLD = IS_MOBILE ? 0.0018 : 0.011;
+/** Absolute silence floor (~-54 dBFS). Real speech almost always exceeds this. */
+const SPEECH_RMS_THRESHOLD = 0.002;
+/**
+ * Speech must exceed the running background-noise estimate by this factor.
+ * Steady fan/HVAC/hiss never crosses it no matter how loud, so a silent
+ * student cannot start a turn — but quiet speech in a quiet room can.
+ */
+const NOISE_MULTIPLIER = 2;
+/** Ignore brief noise spikes — speech must stay above the gate for ~4 analyser frames (~85ms). */
+const MIN_SPEECH_FRAMES = 4;
+/** Give the noise-floor estimate time to settle before it gates speech. */
+const NOISE_WARMUP_MS = 400;
 const POST_TURN_LISTEN_DELAY_MS = IS_MOBILE ? 450 : 80;
 const BROWSER_STT_RESTART_DELAY_MS = IS_MOBILE ? 350 : 80;
 /** Client patience for text turns (browser STT path). */
@@ -599,6 +609,11 @@ export function useLiveVoiceCall({
       const startedAt = Date.now();
       let silenceStartedAt = 0;
       let peakRms = 0;
+      let speechFrames = 0;
+      let noiseFloor = Infinity;
+      let speechGate = SPEECH_RMS_THRESHOLD;
+      // Give the noise estimate a moment to settle before it can block or allow speech.
+      const noiseWarmupUntil = startedAt + NOISE_WARMUP_MS;
       const turnId = ++turnSeqRef.current;
 
       recorder.ondataavailable = (event) => {
@@ -634,14 +649,12 @@ export function useLiveVoiceCall({
           return;
         }
 
-        // Android Chrome VAD often misses quiet / accented speech (RMS never crosses
-        // the gate). Still send the clip to Whisper when we have enough audio bytes.
+        // Never send a clip the client VAD did not register as speech — it is
+        // silence or background noise. Whisper would otherwise turn that noise into
+        // words and the AI would answer "input" the student never said.
         if (speechStartedAtRef.current === 0) {
-          const likelyHasAudio = blob.size >= minLiveCallBlobBytes() * (IS_MOBILE ? 1.2 : 2);
-          if (!likelyHasAudio || elapsed < (IS_MOBILE ? 700 : 900)) {
-            scheduleListen(150);
-            return;
-          }
+          scheduleListen(150);
+          return;
         }
 
         startBusy();
@@ -684,23 +697,45 @@ export function useLiveVoiceCall({
         const rms = rmsFromAnalyser(analyser, sampleBuffer);
         const now = Date.now();
 
-        if (rms >= SPEECH_RMS_THRESHOLD) {
-          if (!speechStartedAtRef.current) speechStartedAtRef.current = now;
-          peakRms = Math.max(peakRms, rms);
-          silenceStartedAt = 0;
-          if (noSpeechTimerRef.current) {
-            clearTimeout(noSpeechTimerRef.current);
-            noSpeechTimerRef.current = null;
+        if (speechStartedAtRef.current) {
+          // End-of-utterance: speech ends once volume drops well below the adaptive
+          // gate (or far below the utterance peak) for SILENCE_MS.
+          const stillTalking =
+            rms >= speechGate * 0.85 || (peakRms > 0 && rms >= peakRms * 0.3);
+          if (stillTalking) {
+            peakRms = Math.max(peakRms, rms);
+            silenceStartedAt = 0;
+          } else {
+            if (!silenceStartedAt) silenceStartedAt = now;
+            const speechDuration = now - speechStartedAtRef.current;
+            const silenceDuration = now - silenceStartedAt;
+            if (speechDuration >= MIN_SPEECH_MS && silenceDuration >= SILENCE_MS) {
+              finishRecording();
+              return;
+            }
           }
-        } else if (speechStartedAtRef.current) {
-          if (!silenceStartedAt) silenceStartedAt = now;
-          const speechDuration = now - speechStartedAtRef.current;
-          const silenceDuration = now - silenceStartedAt;
-          // Relaxed end-of-utterance: absolute quiet OR relative drop from peak.
-          const quietEnough = rms < SPEECH_RMS_THRESHOLD * 0.85 || (peakRms > 0 && rms < peakRms * 0.35);
-          if (speechDuration >= MIN_SPEECH_MS && silenceDuration >= SILENCE_MS && quietEnough) {
-            finishRecording();
-            return;
+        } else {
+          // No speech yet — track a running estimate of the background noise so the
+          // gate adapts to the room: quiet rooms gate low, noisy rooms gate high.
+          if (noiseFloor === Infinity || rms < noiseFloor) noiseFloor = rms;
+          else noiseFloor += (rms - noiseFloor) * (now < noiseWarmupUntil ? 0.1 : 0.02);
+          speechGate = Math.max(SPEECH_RMS_THRESHOLD, noiseFloor * NOISE_MULTIPLIER);
+
+          if (now >= noiseWarmupUntil && rms >= speechGate) {
+            speechFrames += 1;
+            // Only treat a sustained run as speech — a single noise spike (keyboard,
+            // door, click) must not start an utterance.
+            if (speechFrames >= MIN_SPEECH_FRAMES) {
+              speechStartedAtRef.current = now;
+              peakRms = rms;
+              silenceStartedAt = 0;
+              if (noSpeechTimerRef.current) {
+                clearTimeout(noSpeechTimerRef.current);
+                noSpeechTimerRef.current = null;
+              }
+            }
+          } else {
+            speechFrames = 0;
           }
         }
 

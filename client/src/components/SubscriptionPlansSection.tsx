@@ -112,7 +112,11 @@ export function SubscriptionPlansSection({
       });
     } catch (err: unknown) {
       const code = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
-      setCheckoutError(code === 'PAYMOB_NOT_CONFIGURED' ? t('paymentGatewayNotReady') : t('paymentCheckoutFailed'));
+      setCheckoutError(
+        code === 'PAYMOB_NOT_CONFIGURED' || code === 'KASHIER_NOT_CONFIGURED'
+          ? t('paymentGatewayNotReady')
+          : t('paymentCheckoutFailed'),
+      );
     } finally {
       setCheckoutPlanId(null);
     }

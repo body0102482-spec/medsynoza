@@ -704,10 +704,11 @@ export default {
       paymentGatewayNotReady:
         "Payment gateway is being configured. Please try again shortly or contact support.",
       paymentSecureDesc:
-        "Secure card payment via Paymob. Your plan activates instantly after success.",
+        "Secure online payment. Your plan activates instantly after success.",
       paymentCheckoutTitle: "Complete your payment",
       paymentCheckoutSecure: "Secure checkout",
       paymentPaymobLabel: "Paymob — card payment",
+      paymentKashierLabel: "Kashier (كاشير) — secure payment",
       paymentCheckoutFooter:
         "Your plan activates automatically after successful payment.",
       paymentCheckoutMissing:
@@ -1942,10 +1943,11 @@ export default {
       paymentGatewayNotReady:
         "بوابة الدفع قيد الإعداد. حاول تاني قريباً أو تواصل مع الدعم.",
       paymentSecureDesc:
-        "دفع آمن بالبطاقة عبر Paymob. الباقة بتتفعّل فور نجاح الدفع.",
+        "دفع آمن إلكتروني. الباقة بتتفعّل فور نجاح الدفع.",
       paymentCheckoutTitle: "أكمل الدفع",
       paymentCheckoutSecure: "دفع آمن",
       paymentPaymobLabel: "Paymob — دفع بالبطاقة",
+      paymentKashierLabel: "كاشير — دفع آمن",
       paymentCheckoutFooter: "باقتك هتتفعّل تلقائياً بعد نجاح الدفع.",
       paymentCheckoutMissing: "جلسة الدفع غير صالحة. ابدأ الدفع من جديد.",
       paymentSessionExpired: "انتهت جلسة الدفع. ارجع للوحة الطالب وحاول تاني.",

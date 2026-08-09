@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from 'openai';
+import { audioContainsSpeech } from './audioSpeechDetector.js';
 import { fixArabicSpeechTranscript, looksLikeSttHallucination, prioritizeWellbeingTranscript, containsWrongScriptForArabic, transcriptionNeedsArabicFix } from './arabicSttFix.js';
 
 function getOpenAIClient(): OpenAI {
@@ -341,6 +342,24 @@ async function transcribeWithOpenAISafe(
   }
 }
 
+/**
+ * Reject clips that are silence or steady background noise before spending a
+ * Whisper call on them. Whisper hallucinates speech on quiet/noisy input, which
+ * previously made the AI answer "random" input while the student was silent.
+ * The gate is heuristic and fails open if ffmpeg is unavailable or undecodable.
+ */
+async function assertAudioHasSpeech(buffer: Buffer, mimeType: string): Promise<void> {
+  try {
+    const hasSpeech = await audioContainsSpeech(buffer, mimeType);
+    if (hasSpeech === false) {
+      throw new Error('recording-too-short');
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message === 'recording-too-short') throw err;
+    console.warn('[stt] audio speech-gate skipped:', err instanceof Error ? err.message : err);
+  }
+}
+
 export async function transcribeAudioBuffer(
   buffer: Buffer,
   mimeType: string,
@@ -389,6 +408,8 @@ export async function transcribeAudioBuffer(
       throw new Error('transcription-unavailable');
     }
   }
+
+  await assertAudioHasSpeech(buffer, mimeType);
 
   return transcribeWithOpenAISafe(buffer, mimeType, language, forceArabic, options);
 }

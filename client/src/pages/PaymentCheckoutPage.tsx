@@ -68,7 +68,7 @@ export default function PaymentCheckoutPage() {
   }, [orderRef, iframeUrl, provider, navigate, t]);
 
   useEffect(() => {
-    if (!orderRef || provider !== 'paymob' || !iframeUrl) return;
+    if (!orderRef || (provider !== 'paymob' && provider !== 'kashier') || !iframeUrl) return;
 
     const poll = setInterval(async () => {
       try {
@@ -133,16 +133,18 @@ export default function PaymentCheckoutPage() {
                 )}
               </div>
 
-              {provider === 'paymob' && iframeUrl ? (
+              {(provider === 'paymob' || provider === 'kashier') && iframeUrl ? (
                 <div className="card overflow-hidden shadow-xl">
                   <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50">
                     <ShieldCheck size={18} className="text-teal-600" />
                     <span className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                      {t('paymentPaymobLabel')}
+                      {provider === 'kashier'
+                        ? t('paymentKashierLabel')
+                        : t('paymentPaymobLabel')}
                     </span>
                   </div>
                   <iframe
-                    title="Paymob checkout"
+                    title={provider === 'kashier' ? 'Kashier checkout' : 'Paymob checkout'}
                     src={iframeUrl}
                     className="w-full min-h-[520px] border-0 bg-white"
                     allow="payment"

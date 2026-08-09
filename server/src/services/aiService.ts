@@ -1284,6 +1284,69 @@ function asksOccupation(text: string): boolean {
   );
 }
 
+function asksWeight(text: string): boolean {
+  return /(?:how\s*much\s*do\s*you\s*weigh|your\s*weight|what.*weight|how\s*heavy)|(?:وزنك|وزن حضرتك|بتوزن\s*كام|تزن\s*كام|كام كيلو|كم كيلو)/i.test(
+    text,
+  );
+}
+
+function asksHeight(text: string): boolean {
+  return /(?:how\s*tall|your\s*height|what.*height)|(?:طولك|طول حضرتك|كام سم|كم سم)/i.test(
+    text,
+  );
+}
+
+/** Parse a stored vitalSigns JSON/string for a labelled measurement (weight/height). */
+function readVitalMeasurement(caseData: Case, keys: RegExp): string | null {
+  const raw = (caseData.vitalSigns || '').trim();
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    for (const [key, val] of Object.entries(parsed)) {
+      if (!keys.test(key)) continue;
+      if (typeof val === 'string' && val.trim()) return val.trim();
+      if (val && typeof val === 'object' && 'value' in (val as Record<string, unknown>)) {
+        const v = (val as Record<string, unknown>).value;
+        if (typeof v === 'string' && v.trim()) return v.trim();
+        if (typeof v === 'number') return String(v);
+      }
+      if (typeof val === 'number') return String(val);
+    }
+  } catch {
+    // Non-JSON vitalSigns — try inline "Weight: 70 kg" style.
+    const m = raw.match(keys.source.includes('weight') ? /weight[:\s]+([^,.;\n]+)/i : /height[:\s]+([^,.;\n]+)/i);
+    if (m?.[1]?.trim()) return m[1].trim();
+  }
+  return null;
+}
+
+function patientWeightPhrase(caseData: Case, isArabic: boolean): string {
+  const weight = readVitalMeasurement(caseData, /weight|wt/i);
+  if (weight) {
+    const hasUnit = /kg|كيلو|kgs|kilogram/i.test(weight);
+    return isArabic
+      ? `وزني ${weight}${hasUnit ? '' : ' كيلو'}.`
+      : `I weigh ${weight}${hasUnit ? '' : ' kg'}.`;
+  }
+  // No weight stored — give a natural, non-fabricated answer instead of dropping the question.
+  return isArabic
+    ? 'مش متأكد بالظبط، بس وزني في المعدل الطبيعي.'
+    : "I'm not sure of the exact number, but my weight is around normal.";
+}
+
+function patientHeightPhrase(caseData: Case, isArabic: boolean): string {
+  const height = readVitalMeasurement(caseData, /height|ht/i);
+  if (height) {
+    const hasUnit = /cm|سم|m\b|متر/i.test(height);
+    return isArabic
+      ? `طولي ${height}${hasUnit ? '' : ' سم'}.`
+      : `I am ${height}${hasUnit ? '' : ' cm'} tall.`;
+  }
+  return isArabic
+    ? 'مش متأكد بالظبط من طولي.'
+    : "I'm not sure of my exact height.";
+}
+
 function patientPriorDoctorPhrase(caseData: Case, isArabic: boolean): string {
   const history = caseData.medicalHistory;
   if (/tonsillitis|التهاب لوز/i.test(history)) {
@@ -1357,6 +1420,8 @@ type PatientQuestionIntent =
   | 'residence'
   | 'birthPlace'
   | 'occupation'
+  | 'weight'
+  | 'height'
   | 'nationality'
   | 'marital'
   | 'gender'
@@ -1389,8 +1454,10 @@ function messageQuestionParts(message: string): string[] {
     /\s+(?=عايش(?:ة)?\s*فين)/i,
     /\s+(?=where\s+do\s+you\s+live)/i,
     /\s+(?=شغلك|بتشتغل|مهنتك|وظيفتك|what\s+do\s+you\s+do|occupation)/i,
+    /\s+(?=وزنك|بتوزن|تزن|كام كيلو|كم كيلو|how\s*much\s*do\s*you\s*weigh|your\s*weight|how\s*heavy)/i,
+    /\s+(?=طولك|كام سم|كم سم|how\s*tall|your\s*height)/i,
     /\s+(?=اتولد(?:ت|تي)?\s*فين)/i,
-    /\s+(?=متجوز|متزوج|اعزب)/i,
+    /\s+(?=متجوز|متزوج|اعزب|are\s+you\s+married|married)/i,
     /\s+(?=بتدخن|تدخين|بتشرب)/i,
     /\s+(?=إزيك|ازيك|عامل(?:ة)?\s*(?:إيه|ايه|أي|eh|eih)|ايه\s*الأخبار|إيه\s*الأخبار)/i,
     /\s+(?=how\s+are\s+you)/i,
@@ -1448,6 +1515,8 @@ function intentForQuestionPart(part: string): PatientQuestionIntent | null {
   if (asksBirthPlace(part)) return 'birthPlace';
   if (asksResidence(part)) return 'residence';
   if (asksOccupation(part)) return 'occupation';
+  if (asksWeight(part)) return 'weight';
+  if (asksHeight(part)) return 'height';
   if (asksPriorDoctorVisit(part)) return 'priorDoctor';
   if (asksNationality(part)) return 'nationality';
   if (asksMaritalStatus(part)) return 'marital';
@@ -1478,6 +1547,8 @@ function resolvePatientQuestionIntents(message: string): PatientQuestionIntent[]
     ['age', asksAge],
     ['residence', asksResidence],
     ['occupation', asksOccupation],
+    ['weight', asksWeight],
+    ['height', asksHeight],
     ['birthPlace', asksBirthPlace],
     ['wellbeing', asksWellbeing],
     ['priorDoctor', asksPriorDoctorVisit],
@@ -1615,6 +1686,10 @@ function deterministicReplyForIntent(
       return patientResidencePhrase(caseData, isArabic);
     case 'occupation':
       return patientOccupationPhrase(caseData, isArabic);
+    case 'weight':
+      return patientWeightPhrase(caseData, isArabic);
+    case 'height':
+      return patientHeightPhrase(caseData, isArabic);
     case 'birthPlace':
       return patientBirthPlacePhrase(caseData, isArabic);
     case 'socialHabits':

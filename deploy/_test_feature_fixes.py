@@ -79,6 +79,19 @@ assert(!/pharmacy training trip|2-week|Hello doctor I am/i.test(multi), 'multipa
 const latinRuns = (multi.match(/[A-Za-z]{5,}/g) || []).length;
 assert(latinRuns <= 3, 'multipart mostly Arabic (few latin leaks)', 'latinRuns=' + latinRuns + ' | ' + multi);
 
+console.log('\n=== 2b. MULTIPART EN (name/weight/age/married) ===');
+const multiEn = await getPatientResponse(
+  ascites,
+  [{ role: 'STUDENT', content: 'hello' }],
+  'what is your name, how much do you weigh, how old are you and are you married',
+  'EN',
+);
+console.log('multiEn:', multiEn);
+assert(/name is|my name/i.test(multiEn), 'EN multipart has name', multiEn);
+assert(/weigh|weight|kg|not sure/i.test(multiEn), 'EN multipart answers weight', multiEn);
+assert(/years old|\bage\b|\d+/i.test(multiEn), 'EN multipart has age', multiEn);
+assert(/married/i.test(multiEn), 'EN multipart has marital', multiEn);
+
 console.log('\n=== 3. STT FILTERS ===');
 assert(looksLikeSttHallucination('Buch.', true), 'Buch.');
 assert(looksLikeSttHallucination('Hello, world!', true), 'Hello world');
