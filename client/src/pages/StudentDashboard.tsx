@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import { Clock, Play, Lock } from 'lucide-react';
@@ -162,7 +162,7 @@ export default function StudentDashboard() {
   const [entitlements, setEntitlements] = useState<Entitlements | null>(null);
   const [startError, setStartError] = useState<string | null>(null);
   const [randomLoading, setRandomLoading] = useState<'all' | 'section' | null>(null);
-  const [randomSectionId, setRandomSectionId] = useState('');
+  const [randomSectionIds, setRandomSectionIds] = useState<string[]>([]);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [pendingStart, setPendingStart] = useState<PendingCaseStart | null>(null);
   const [confirmLoading, setConfirmLoading] = useState(false);
@@ -219,16 +219,42 @@ export default function StudentDashboard() {
     [rootCategories, isAr],
   );
 
+  const boardKeyOf = useCallback(
+    (id: string) => {
+      const opt = sectionOptions.find((o) => o.id === id);
+      return opt ? (opt.boardLabel ?? opt.shortLabel) : null;
+    },
+    [sectionOptions],
+  );
+
   useEffect(() => {
     if (!sectionOptions.length) return;
-    setRandomSectionId((prev) => {
-      if (prev && sectionOptions.some((o) => o.id === prev)) return prev;
+    setRandomSectionIds((prev) => {
+      const stillValid = prev.filter((id) => sectionOptions.some((o) => o.id === id));
+      if (stillValid.length) return stillValid;
       if (activeCategoryId && sectionOptions.some((o) => o.id === activeCategoryId)) {
-        return activeCategoryId;
+        return [activeCategoryId];
       }
-      return sectionOptions[0].id;
+      return [sectionOptions[0].id];
     });
   }, [sectionOptions, activeCategoryId]);
+
+  // Multi-select limited to one specialty (board): toggling a department in a
+  // different specialty switches the whole selection to that specialty.
+  const toggleRandomSection = useCallback(
+    (id: string) => {
+      setRandomSectionIds((prev) => {
+        if (prev.includes(id)) {
+          const next = prev.filter((x) => x !== id);
+          return next.length ? next : prev; // keep at least one selected
+        }
+        const board = boardKeyOf(id);
+        const sameBoard = prev.length === 0 || boardKeyOf(prev[0]) === board;
+        return sameBoard ? [...prev, id] : [id];
+      });
+    },
+    [boardKeyOf],
+  );
 
   useEffect(() => {
     if (!rootCategories.length || selectedBoardId) return;
@@ -296,12 +322,13 @@ export default function StudentDashboard() {
     }
   };
 
-  const startRandomCase = async (categoryId?: string) => {
+  const startRandomCase = async (categoryIds?: string[]) => {
+    const ids = (categoryIds ?? []).filter(Boolean);
     setStartError(null);
-    setRandomLoading(categoryId ? 'section' : 'all');
+    setRandomLoading(ids.length ? 'section' : 'all');
     try {
       const randomRes = await api.get('/student/random-case', {
-        params: categoryId ? { categoryId } : {},
+        params: ids.length ? { categoryId: ids.join(',') } : {},
       });
       const caseId = randomRes.data?.case?.id;
       if (!caseId) {
@@ -310,7 +337,7 @@ export default function StudentDashboard() {
       }
       await launchSession(caseId);
     } catch (err: unknown) {
-      showStartError(resolveStartError(err, categoryId ? 'section' : 'all'));
+      showStartError(resolveStartError(err, ids.length ? 'section' : 'all'));
     } finally {
       setRandomLoading(null);
       setConfirmLoading(false);
@@ -323,7 +350,7 @@ export default function StudentDashboard() {
     setConfirmLoading(true);
     try {
       if (pending.type === 'random') {
-        await startRandomCase(pending.categoryId);
+        await startRandomCase(pending.categoryIds);
       } else {
         setConfirmOpen(false);
         setPendingStart(null);
@@ -401,10 +428,11 @@ export default function StudentDashboard() {
             id: o.id,
             shortLabel: o.shortLabel,
             caseCount: o.caseCount,
+            boardLabel: o.boardLabel,
           }))}
-          selectedSectionId={randomSectionId}
-          onSectionChange={setRandomSectionId}
-          onSurpriseMe={() => requestCaseStart({ type: 'random', categoryId: randomSectionId })}
+          selectedSectionIds={randomSectionIds}
+          onToggleSection={toggleRandomSection}
+          onSurpriseMe={() => requestCaseStart({ type: 'random', categoryIds: randomSectionIds })}
           loading={randomLoading !== null}
           error={startError}
           errorRef={randomErrorRef}

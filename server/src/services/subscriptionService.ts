@@ -286,16 +286,23 @@ export async function recordCaseAttempt(userId: string, caseId: string) {
   });
 }
 
-export async function pickRandomEligibleCase(userId: string, categoryId?: string) {
+export async function pickRandomEligibleCase(
+  userId: string,
+  categoryIds?: string | string[],
+) {
   const subscription = await getActiveSubscription(userId);
   const plan = subscription?.plan ?? 'FREE';
   const freePlan = !isPaidPlan(plan);
+
+  const ids = (Array.isArray(categoryIds) ? categoryIds : categoryIds ? [categoryIds] : [])
+    .map((id) => id.trim())
+    .filter(Boolean);
 
   const cases = await prisma.case.findMany({
     where: {
       isPublished: true,
       ...(freePlan ? { isFreeTier: true } : {}),
-      ...(categoryId ? { categoryId } : {}),
+      ...(ids.length === 1 ? { categoryId: ids[0] } : ids.length > 1 ? { categoryId: { in: ids } } : {}),
     },
     include: { specialty: true, difficulty: true, category: true },
   });

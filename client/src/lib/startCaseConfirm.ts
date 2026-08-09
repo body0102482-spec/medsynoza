@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next';
 
 export type PendingCaseStart =
-  | { type: 'random'; categoryId?: string }
+  | { type: 'random'; categoryIds?: string[] }
   | { type: 'station'; caseId: string };
 
 interface EntitlementsLike {

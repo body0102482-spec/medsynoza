@@ -40,6 +40,8 @@ export default {
         "Random station from selected departments — no preview until you enter the simulator.",
       blindMockBadge: "Blind mode",
       blindMockPickSection: "Pick a rotation pool",
+      blindMockMultiSelectHint:
+        "Pick one or more departments from the same specialty.",
       blindMockNoPreviewHint:
         "Station details stay hidden until you enter the simulator.",
       startCaseConfirmTitle: "Start a new OSCE case?",
@@ -1173,6 +1175,13 @@ export default {
       clinicalExaminer: "Clinical Examiner",
       describeFindings: "Describe your clinical findings...",
       completeStep: "Complete Step",
+      maneuverSolvedTitle: "Maneuver solved & appended to record log",
+      maneuverSolvedDesc:
+        "Your physical examination findings have been logged. Below is the official OSCE standard findings for this step:",
+      modelAnswerLabel: "Model answer — standard findings",
+      modelAnswerUnavailable: "No standard findings were provided for this step.",
+      consolidatedLogTitle: "Consolidated OSCE physical exam log",
+      proceedToNextStep: "Proceed to next step",
       selectManeuver: "Select an examination step",
       selectManeuverDesc:
         "Choose Inspection, Palpation, Percussion, or Auscultation from the sidebar.",
@@ -1302,6 +1311,7 @@ export default {
         "محطة عشوائية من الأقسام المختارة — بدون معاينة حتى تدخل المحاكي.",
       blindMockBadge: "وضع مفاجئ",
       blindMockPickSection: "اختار مجموعة المحطات",
+      blindMockMultiSelectHint: "تقدر تختار أكتر من قسم من نفس التخصص.",
       blindMockNoPreviewHint: "تفاصيل المحطة تفضل مخفية لحد ما تدخل المحاكي.",
       startCaseConfirmTitle: "تبدأ حالة OSCE جديدة؟",
       startCaseConfirmNewCaseMessage:
@@ -2397,6 +2407,13 @@ export default {
       clinicalExaminer: "الفحص السريري — Examiner",
       describeFindings: "صف ملاحظاتك السريرية...",
       completeStep: "إنهاء الخطوة",
+      maneuverSolvedTitle: "تم إنهاء المناورة بنجاح وإضافتها لسجل الفحص",
+      maneuverSolvedDesc:
+        "تم تسجيل ملاحظات الفحص السريري بنجاح. وفيما يلي الإجابة النموذجية المعتمدة لهذه الخطوة:",
+      modelAnswerLabel: "الإجابة النموذجية — الملاحظات القياسية",
+      modelAnswerUnavailable: "لا توجد ملاحظات نموذجية مسجلة لهذه الخطوة.",
+      consolidatedLogTitle: "سجل الفحص السريري المجمّع",
+      proceedToNextStep: "الانتقال للخطوة التالية",
       selectManeuver: "اختر خطوة فحص",
       selectManeuverDesc:
         "اختر Inspection أو Palpation أو Percussion أو Auscultation من القائمة.",

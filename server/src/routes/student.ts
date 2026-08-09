@@ -40,9 +40,15 @@ router.get('/entitlements', async (req, res) => {
 
 router.get('/random-case', async (req, res) => {
   const userId = req.user!.id;
-  const categoryId = req.query.categoryId ? String(req.query.categoryId) : undefined;
+  // Accepts a single id, a comma-separated list, or repeated categoryId params.
+  const categoryIds = req.query.categoryId
+    ? String(req.query.categoryId)
+        .split(',')
+        .map((id) => id.trim())
+        .filter(Boolean)
+    : [];
 
-  const result = await pickRandomEligibleCase(userId, categoryId);
+  const result = await pickRandomEligibleCase(userId, categoryIds);
 
   if (!result.ok) {
     if (result.code === 'NO_CASES') {

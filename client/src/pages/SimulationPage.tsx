@@ -137,6 +137,27 @@ function resolveExamImageUrl(maneuverId: string, url: string): string {
   return DEFAULT_MANEUVER_IMAGES[maneuverId] || url;
 }
 
+const EXAM_MANEUVER_KEYS = ['inspection', 'palpation', 'percussion', 'auscultation'] as const;
+
+/** Parse a case's physicalExam JSON into per-maneuver model-answer findings. */
+function parseStructuredFindings(raw?: string): Record<string, string> {
+  if (!raw || !raw.trim()) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      const out: Record<string, string> = {};
+      for (const key of EXAM_MANEUVER_KEYS) {
+        const value = (parsed as Record<string, unknown>)[key];
+        if (typeof value === 'string' && value.trim()) out[key] = value.trim();
+      }
+      return out;
+    }
+  } catch {
+    // Not JSON — treat the whole text as generic inspection findings.
+  }
+  return { inspection: raw.trim() };
+}
+
 function inferMediaType(item: ExamImage): 'image' | 'video' | 'audio' {
   if (item.mediaType) return item.mediaType;
   const lower = item.url.toLowerCase();
@@ -198,6 +219,9 @@ export default function SimulationPage() {
   const [activeStage, setActiveStage] = useState("history");
   const [activeManeuver, setActiveManeuver] = useState<string | null>(null);
   const [completedManeuvers, setCompletedManeuvers] = useState<string[]>([]);
+  // Maneuver just finished and awaiting the student to review the model answer
+  // before proceeding to the next step.
+  const [solvedManeuver, setSolvedManeuver] = useState<string | null>(null);
   const [showExaminerPanel, setShowExaminerPanel] = useState(false);
   const [input, setInput] = useState("");
   const [lang, setLang] = useState<"AUTO" | "AR" | "EN">("AR");
@@ -721,6 +745,7 @@ export default function SimulationPage() {
         maneuverId,
       });
       setActiveManeuver(maneuverId);
+      setSolvedManeuver(null);
       setVivaActive(true);
       setActiveStage("examination");
       setSession((prev) =>
@@ -742,7 +767,6 @@ export default function SimulationPage() {
 
   const completeManeuver = async () => {
     if (!activeManeuver) return;
-    const currentIndex = caseManeuvers.findIndex((m) => m.id === activeManeuver);
     setSending(true);
     try {
       const res = await api.post(`/sessions/${sessionId}/maneuver/complete`, {
@@ -751,25 +775,34 @@ export default function SimulationPage() {
       const updatedCompleted = res.data.completedManeuvers as string[];
       setCompletedManeuvers(updatedCompleted);
       setVivaActive(false);
-
-      const next = caseManeuvers[currentIndex + 1];
-      if (next) {
-        await startManeuver(next.id);
-      } else {
-        setActiveManeuver(null);
-        setSession((prev) =>
-          prev
-            ? {
-                ...prev,
-                activeManeuver: null,
-                completedManeuvers: JSON.stringify(updatedCompleted),
-              }
-            : prev,
-        );
-        changeStage(getNextMainStageAfter('examination', stationConfig));
-      }
+      // Show the "maneuver solved" panel with the model answer instead of
+      // advancing immediately; the student proceeds when ready.
+      setSolvedManeuver(activeManeuver);
     } finally {
       setSending(false);
+    }
+  };
+
+  const proceedAfterSolved = async () => {
+    const solvedId = solvedManeuver ?? activeManeuver;
+    if (!solvedId) return;
+    setSolvedManeuver(null);
+    const currentIndex = caseManeuvers.findIndex((m) => m.id === solvedId);
+    const next = caseManeuvers[currentIndex + 1];
+    if (next) {
+      await startManeuver(next.id);
+    } else {
+      setActiveManeuver(null);
+      setSession((prev) =>
+        prev
+          ? {
+              ...prev,
+              activeManeuver: null,
+              completedManeuvers: JSON.stringify(completedManeuvers),
+            }
+          : prev,
+      );
+      changeStage(getNextMainStageAfter('examination', stationConfig));
     }
   };
 
@@ -1175,6 +1208,8 @@ export default function SimulationPage() {
                 sending={sending}
                 chatError={chatError}
                 completeManeuver={completeManeuver}
+                solved={solvedManeuver === activeManeuver}
+                onProceed={proceedAfterSolved}
                 chatEndRef={chatEndRef}
                 lang={lang}
                 setLang={updateSpeechLanguage}
@@ -1312,6 +1347,8 @@ function ExaminationView({
   sending,
   chatError,
   completeManeuver,
+  solved = false,
+  onProceed,
   chatEndRef,
   lang,
   setLang,
@@ -1347,6 +1384,8 @@ function ExaminationView({
   sending: boolean;
   chatError: string;
   completeManeuver: () => void;
+  solved?: boolean;
+  onProceed?: () => void;
   chatEndRef: React.RefObject<HTMLDivElement | null>;
   lang: "AUTO" | "AR" | "EN";
   setLang: (l: "AUTO" | "AR" | "EN") => void;
@@ -1369,6 +1408,12 @@ function ExaminationView({
   sessionLocked?: boolean;
 }) {
   const [galleryOpen, setGalleryOpen] = useState(false);
+
+  const structuredFindings = parseStructuredFindings(session.case.physicalExam);
+  const maneuverModelAnswer = activeManeuver ? structuredFindings[activeManeuver] ?? '' : '';
+  const consolidatedFindings = caseManeuvers
+    .filter((m) => completedManeuvers.includes(m.id) && (structuredFindings[m.id] ?? '').trim())
+    .map((m) => ({ id: m.id, name: isAr ? m.nameAr : m.nameEn, findings: structuredFindings[m.id] }));
 
   if (!activeManeuver || !activeManeuverMeta) {
     const nextId = getNextManeuver(completedManeuvers, caseManeuvers);
@@ -1516,16 +1561,18 @@ function ExaminationView({
             </div>
 
             {/* Row 3: complete step on mobile */}
-            <div className="md:hidden px-3 pb-2 flex justify-end border-t border-slate-100 dark:border-slate-800 pt-2">
-              <button
-                type="button"
-                onClick={completeManeuver}
-                className="text-[11px] btn-secondary px-3 py-1.5 inline-flex items-center gap-1"
-              >
-                {t("completeStep")}
-                <ChevronRight size={14} />
-              </button>
-            </div>
+            {!solved && (
+              <div className="md:hidden px-3 pb-2 flex justify-end border-t border-slate-100 dark:border-slate-800 pt-2">
+                <button
+                  type="button"
+                  onClick={completeManeuver}
+                  className="text-[11px] btn-secondary px-3 py-1.5 inline-flex items-center gap-1"
+                >
+                  {t("completeStep")}
+                  <ChevronRight size={14} />
+                </button>
+              </div>
+            )}
           </div>
 
           <ChatScrollArea
@@ -1558,46 +1605,108 @@ function ExaminationView({
             {sending && <ChatTypingIndicator label={t("examinerTyping")} />}
           </ChatScrollArea>
 
-          <div className="shrink-0 border-t border-slate-100 dark:border-slate-800">
-            <div className="hidden md:flex px-4 pt-3 justify-end">
-              <button
-                type="button"
-                onClick={completeManeuver}
-                className="text-xs btn-secondary"
-              >
-                {t("completeStep")}{" "}
-                <ChevronRight size={14} className="inline" />
-              </button>
+          {solved ? (
+            <div className="shrink-0 border-t border-emerald-200 dark:border-emerald-900 bg-emerald-50/60 dark:bg-emerald-950/30 max-h-[52vh] overflow-y-auto overscroll-y-contain">
+              <div className="p-4 sm:p-5 space-y-4">
+                <div className="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-white dark:bg-slate-900 p-4">
+                  <div className="flex items-start gap-3">
+                    <div className="w-9 h-9 rounded-full bg-emerald-100 dark:bg-emerald-900/50 flex items-center justify-center shrink-0">
+                      <CheckCircle2 size={20} className="text-emerald-600 dark:text-emerald-400" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-bold text-emerald-800 dark:text-emerald-300 uppercase tracking-wide">
+                        {t("maneuverSolvedTitle")}
+                      </p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                        {t("maneuverSolvedDesc")}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="mt-3">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-emerald-700/80 dark:text-emerald-400/80 mb-1">
+                      {t("modelAnswerLabel")}
+                    </p>
+                    <div
+                      className="rounded-xl bg-slate-900 text-slate-100 text-sm leading-relaxed p-3 whitespace-pre-line"
+                      dir="auto"
+                    >
+                      {maneuverModelAnswer || t("modelAnswerUnavailable")}
+                    </div>
+                  </div>
+                </div>
+
+                {consolidatedFindings.length > 0 && (
+                  <div className="rounded-2xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 p-4">
+                    <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500 mb-2">
+                      {t("consolidatedLogTitle")}
+                    </p>
+                    <div className="space-y-2.5">
+                      {consolidatedFindings.map((row) => (
+                        <div key={row.id} dir="auto">
+                          <p className="text-[11px] font-bold text-teal-700 dark:text-teal-400 uppercase">
+                            {row.name}
+                          </p>
+                          <p className="text-sm text-slate-700 dark:text-slate-200 whitespace-pre-line">
+                            {row.findings}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={onProceed}
+                  className="w-full btn-primary py-3 inline-flex items-center justify-center gap-2"
+                >
+                  {t("proceedToNextStep")}
+                  <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
-            {(isLiveCall || micError) && (
-              <LiveCallMicStatus
+          ) : (
+            <div className="shrink-0 border-t border-slate-100 dark:border-slate-800">
+              <div className="hidden md:flex px-4 pt-3 justify-end">
+                <button
+                  type="button"
+                  onClick={completeManeuver}
+                  className="text-xs btn-secondary"
+                >
+                  {t("completeStep")}{" "}
+                  <ChevronRight size={14} className="inline" />
+                </button>
+              </div>
+              {(isLiveCall || micError) && (
+                <LiveCallMicStatus
+                  isLiveCall={isLiveCall}
+                  isBusy={isLiveCallBusy}
+                  isMicListening={isLiveCallMicListening}
+                  isSpeaking={isLiveCallSpeaking}
+                  error={isLiveCall ? micError : undefined}
+                />
+              )}
+              <SimulationChatInput
+                input={input}
+                setInput={setInput}
+                onSend={() => sendMessage()}
+                sending={sending}
+                placeholder={t("describeFindings")}
+                chatError={chatError}
+                isListening={isListening}
+                isProcessing={isProcessing}
+                isMicSupported={isMicSupported}
+                onToggleMic={onToggleMic}
+                micListeningLabel={t("micListening")}
+                micNotSupportedLabel={t("micNotSupported")}
+                micProcessingLabel={t("micProcessing")}
+                micError={micError}
+                disabled={sessionLocked}
                 isLiveCall={isLiveCall}
-                isBusy={isLiveCallBusy}
-                isMicListening={isLiveCallMicListening}
-                isSpeaking={isLiveCallSpeaking}
-                error={isLiveCall ? micError : undefined}
+                compact
               />
-            )}
-            <SimulationChatInput
-              input={input}
-              setInput={setInput}
-              onSend={() => sendMessage()}
-              sending={sending}
-              placeholder={t("describeFindings")}
-              chatError={chatError}
-              isListening={isListening}
-              isProcessing={isProcessing}
-              isMicSupported={isMicSupported}
-              onToggleMic={onToggleMic}
-              micListeningLabel={t("micListening")}
-              micNotSupportedLabel={t("micNotSupported")}
-              micProcessingLabel={t("micProcessing")}
-              micError={micError}
-              disabled={sessionLocked}
-              isLiveCall={isLiveCall}
-              compact
-            />
-          </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
